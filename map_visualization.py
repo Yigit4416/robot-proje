@@ -1,300 +1,374 @@
 import pygame
 import sys
 import heapq
-import time
 import random
 
-# Constants
-MAP_WIDTH = 300
-MAP_HEIGHT = 600
-CELL_SIZE = 5 # Increased size as requested
-# Window dimensions calculated from map size
+# --- AYARLAR (CONSTANTS) ---
+CELL_SIZE = 10
+MAP_WIDTH = 80
+MAP_HEIGHT = 60
 WINDOW_WIDTH = MAP_WIDTH * CELL_SIZE
 WINDOW_HEIGHT = MAP_HEIGHT * CELL_SIZE
+FPS = 30
 
-# Colors (R, G, B)
-COLOR_BLACK = (0, 0, 0)
-COLOR_WHITE = (255, 255, 255)
-COLOR_RED = (255, 0, 0)
-COLOR_GRAY = (50, 50, 50)
-COLOR_BLUE = (0, 0, 255) # Color for the car
-COLOR_GREEN = (0, 255, 0) # Color for the path
-COLOR_PINK = (255, 105, 180) # Color for dynamic obstacles
+# Renkler (R, G, B)
+COLOR_BG = (20, 20, 20)
+COLOR_GRID = (40, 40, 40)
+COLOR_WALL = (200, 50, 50)        # Sabit duvarlar
+COLOR_PATH = (0, 200, 0)
+COLOR_CAR = (50, 150, 255)
+COLOR_SENSOR = (255, 255, 0)
+COLOR_START = (0, 255, 127)
+COLOR_END = (255, 0, 127)
+COLOR_TEXT = (220, 220, 220)
 
+# Map kodları:
+# real_map: 0 boş, 1 sabit duvar, 2 gizli engel (ground truth)
+# known_map: 0 bilinmiyor/boş sanıyor, 1 bilinen engel (duvar veya keşfedilen)
 
+class PathfindingVisualizer:
+    def __init__(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        pygame.display.set_caption("Otonom Araç A* Simülasyonu (Sunum Sürümü)")
+        self.clock = pygame.time.Clock()
 
-def create_map(width, height):
-    """
-    Creates a 2D list representing the map.
-    Returns a list of lists where map[x][y] represents the block at (x, y).
-    """
-    # Create a 2D list filled with 0s (representing empty space)
-    # Using list comprehension for cleaner initialization
-    game_map = [[0 for _ in range(height)] for _ in range(width)]
-    return game_map
+        self.font = pygame.font.SysFont("consolas", 16)
 
-def insert_to_block(game_map, x, y, value):
-    """
-    [USER REMINDER]
-    Use this function to insert things into blocks later on!
-    
-    Parameters:
-    - game_map: The 300x600 list
-    - x: The x coordinate (0 to 299)
-    - y: The y coordinate (0 to 599)
-    - value: The thing you want to add to the block (e.g., an object, ID, or property)
-    """
-    if 0 <= x < len(game_map) and 0 <= y < len(game_map[0]):
-        game_map[x][y] = value
-        print(f"Block at ({x}, {y}) updated to {value}")
-    else:
-        print(f"Error: Coordinates ({x}, {y}) are out of bounds.")
+        self.running = True
+        self.paused = False
 
-def heuristic(a, b):
-    """Manhattan distance heuristic for A*"""
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+        self.real_map = []
+        self.known_map = []
 
-def find_path_astar(game_map, start, end):
-    """
-    Finds the shortest path from start to end using A* Algorithm.
-    """
-    rows = len(game_map)
-    cols = len(game_map[0])
-    
-    # Priority queue stores: (f_score, x, y)
-    # f_score = g_score + h_score
-    queue = [(0, start)]
-    
-    g_score = {start: 0}
-    f_score = {start: heuristic(start, end)}
-    
-    came_from = {start: None}
-    
-    directions = [(0, 1), (0, -1), (1, 0), (-1, 0)] 
-    
-    # Check for timeout or max iterations to prevent freezing
-    iterations = 0
-    max_iterations = 200000 
-    
-    while queue:
-        iterations += 1
-        if iterations > max_iterations:
-             print("A* took too long, giving up.")
-             break
+        self.start_pos = (2, 2)
+        self.end_pos = (MAP_WIDTH - 3, MAP_HEIGHT - 3)
+        self.car_pos = self.start_pos
+        self.path = []
 
-        current_f, current_node = heapq.heappop(queue)
+        # İstatistikler (sunumda çok iyi durur)
+        self.steps = 0
+        self.replans = 0
+        self.discovered_obstacles = 0
+
+        self.initialize_game()
+
+    def create_grid(self, default=0):
+        return [[default for _ in range(MAP_HEIGHT)] for _ in range(MAP_WIDTH)]
+
+    def initialize_game(self):
+        self.real_map = self.create_grid(0)
+        self.known_map = self.create_grid(0)
         
-        if current_node == end:
-            # Reconstruct path
-            path = []
-            curr = end
-            while curr:
-                path.append(curr)
-                curr = came_from[curr]
-            path.reverse()
-            return path
-        
-        # If we found a path with worse f_score already, skip
-        # (Though with consistent heuristic, first pop is optimal)
-        
-        cx, cy = current_node
-        
-        for dx, dy in directions:
-            nx, ny = cx + dx, cy + dy
-            
-            if 0 <= nx < rows and 0 <= ny < cols:
-                if game_map[nx][ny] != 0:
-                    continue
-                
-                tentative_g_score = g_score[current_node] + 1
-                
-                if tentative_g_score < g_score.get((nx, ny), float('inf')):
-                    came_from[(nx, ny)] = current_node
-                    g_score[(nx, ny)] = tentative_g_score
-                    f = tentative_g_score + heuristic((nx, ny), end)
-                    f_score[(nx, ny)] = f
-                    heapq.heappush(queue, (f, (nx, ny)))
+        # Keşfedilen engellerin özellikleri (x, y) -> { "color": ... }
+        self.obstacle_props = {} 
 
-    print("No path found.")
-    return []
+        self.car_pos = self.start_pos
+        self.path = []
 
-def initialize_display():
-    """
-    Initializes Pygame and creates the display window.
-    """
-    pygame.init()
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-    pygame.display.set_caption("300x600 Map Visualization (A*)")
-    return screen
+        self.steps = 0
+        self.replans = 0
+        self.discovered_obstacles = 0
 
-def draw_grid(screen):
-    """Draws the grid lines."""
-    # Vertical lines
-    for x in range(MAP_WIDTH + 1):
-        pygame.draw.line(screen, COLOR_GRAY, (x * CELL_SIZE, 0), (x * CELL_SIZE, WINDOW_HEIGHT))
-    # Horizontal lines
-    for y in range(MAP_HEIGHT + 1):
-        pygame.draw.line(screen, COLOR_GRAY, (0, y * CELL_SIZE), (WINDOW_WIDTH, y * CELL_SIZE))
+        # Sabit duvarlar (bilinen)
+        self.add_wall_line((20, 0), (20, 40))
+        self.add_wall_line((50, 20), (50, 59))
+        self.add_wall_line((20, 40), (40, 40))
 
-def draw_map(screen, game_map):
-    """
-    Draws the map obstacles and grid.
-    """
-    screen.fill(COLOR_BLACK) # Clear screen
+        # Rastgele gizli engeller (real_map'te var, known_map'te yok)
+        print("Rastgele gizli engeller oluşturuluyor...")
+        for _ in range(300):
+            rx = random.randint(0, MAP_WIDTH - 1)
+            ry = random.randint(0, MAP_HEIGHT - 1)
 
-    # 1. Draw active cells
-    for x in range(MAP_WIDTH):
-        for y in range(MAP_HEIGHT):
-            cell_value = game_map[x][y]
-            if cell_value == 1: # Static Wall
-                rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                pygame.draw.rect(screen, COLOR_RED, rect)
-            elif cell_value == 2: # Dynamic Obstacle
-                rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                pygame.draw.rect(screen, COLOR_PINK, rect)
-    
-    # 2. Draw grid
-    draw_grid(screen)
+            # Başlangıç ve bitişi kapatma
+            if self.heuristic((rx, ry), self.start_pos) > 5 and \
+               self.heuristic((rx, ry), self.end_pos) > 5 and \
+               self.real_map[rx][ry] == 0:
+                self.real_map[rx][ry] = 2
 
-def draw_path(screen, path):
-    """Draws the path in green."""
-    for (x, y) in path:
-        rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-        pygame.draw.rect(screen, COLOR_GREEN, rect)
+        self.recalculate_path(initial=True)
 
-def draw_car(screen, position):
-    """Draws the car as a blue block."""
-    x, y = position
-    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-    pygame.draw.rect(screen, COLOR_BLUE, rect)
+    def add_wall_line(self, start, end):
+        x1, y1 = start
+        x2, y2 = end
 
+        if x1 == x2:  # Dikey
+            for y in range(min(y1, y2), max(y1, y2) + 1):
+                if 0 <= x1 < MAP_WIDTH and 0 <= y < MAP_HEIGHT:
+                    self.real_map[x1][y] = 1
+                    self.known_map[x1][y] = 1
+        elif y1 == y2:  # Yatay
+            for x in range(min(x1, x2), max(x1, x2) + 1):
+                if 0 <= x < MAP_WIDTH and 0 <= y1 < MAP_HEIGHT:
+                    self.real_map[x][y1] = 1
+                    self.known_map[x][y1] = 1
 
-def handle_events():
-    """
-    Handles Pygame events like closing the window.
-    Returns False if the game should quit, True otherwise.
-    """
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            return False
-    return True
+    def heuristic(self, a, b):
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
-def main():
-    """
-    Main execution function.
-    """
-    # 1. Create the map
-    my_map = create_map(MAP_WIDTH, MAP_HEIGHT)
-    
-    # 2. Add Obstacles (Walls)
-    print("Adding obstacles...")
-    # Wall 1: Horizontal wall blocking the way down
-    for x in range(0, 250):
-        insert_to_block(my_map, x, 150, 1)
-        
-    # Wall 2: Vertical wall blocking the right side
-    for y in range(300, 500):
-        insert_to_block(my_map, 200, y, 1)
-        
-    # Wall 3: Another horizontal wall
-    for x in range(50, 300):
-        insert_to_block(my_map, x, 400, 1)
+    def find_path_astar(self):
+        start = self.car_pos
+        end = self.end_pos
 
-    # 3. Initialize Known Map (What the car knows initially - only walls)
-    known_map = [row[:] for row in my_map]
+        queue = [(0, start)]
+        g_score = {start: 0}
+        came_from = {start: None}
 
-    # 4. Add Dynamic Obstacles (Hidden from car initially)
-    print("Adding random dynamic obstacles...")
-    for _ in range(1000): # Back to 100 for safety, 1000 was too much for drawing loop too! (User changed it manually though)
-        rx = random.randint(0, MAP_WIDTH - 1)
-        ry = random.randint(0, MAP_HEIGHT - 1)
-        # Avoid start and end areas
-        if (rx < 20 and ry < 20) or (rx > MAP_WIDTH - 20 and ry > MAP_HEIGHT - 20):
-            continue
-        if my_map[rx][ry] == 0:
-             for dx in range(3):
-                 for dy in range(3):
-                     if 0 <= rx+dx < MAP_WIDTH and 0 <= ry+dy < MAP_HEIGHT:
-                        insert_to_block(my_map, rx+dx, ry+dy, 2) 
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
 
-    # 5. Setup display
-    screen = initialize_display()
-    
-    # 6. Pathfinding Setup
-    start_pos = (0, 0)
-    end_pos = (MAP_WIDTH - 1, MAP_HEIGHT - 1)
-    
-    my_map[start_pos[0]][start_pos[1]] = 0
-    my_map[end_pos[0]][end_pos[1]] = 0
-    known_map[start_pos[0]][start_pos[1]] = 0
-    known_map[end_pos[0]][end_pos[1]] = 0
-    
-    # Initial path using A*
-    print("Calculating initial path with A*...")
-    path = find_path_astar(known_map, start_pos, end_pos)
-    
-    car_position = start_pos
-    path_index = 0
-    
-    clock = pygame.time.Clock()
-    last_move_time = time.time()
-    
-    running = True
-    while running:
-        running = handle_events()
-        
-        # --- Optimized Sensor Logic ---
-        recalculate = False
-        
-        # Only check the NEXT 5 STEPS on the path
-        if path:
-            # We look ahead from current path_index
-            lookahead_range = 5
-            for i in range(1, lookahead_range + 1):
-                idx = path_index + i
-                if idx < len(path):
-                    px, py = path[idx]
-                    # Check if this specific future step is blocked in REALITY
-                    # but unknown to us
-                    if my_map[px][py] == 2 and known_map[px][py] == 0:
-                        known_map[px][py] = 2 # Discover it
-                        recalculate = True
-                        print(f"Path blocked at {px},{py}! Recalculating...")
-                        break # One block is enough to force replan
-        
-        if recalculate:
-            # Replan from current position
-            new_path = find_path_astar(known_map, car_position, end_pos)
-            if new_path:
-                path = new_path
-                path_index = 0 
-            else:
-                print("No path found!")
+        while queue:
+            current_f, current = heapq.heappop(queue)
+
+            if current == end:
                 path = []
+                while current is not None:
+                    path.append(current)
+                    current = came_from[current]
+                return path[::-1]
 
-        # --- Car Movement ---
-        current_time = time.time()
-        if path and path_index < len(path):
-            if current_time - last_move_time >= 0.01: 
-                car_position = path[path_index]
-                path_index += 1
-                last_move_time = current_time
+            cx, cy = current
+
+            for dx, dy in directions:
+                nx, ny = cx + dx, cy + dy
+
+                if 0 <= nx < MAP_WIDTH and 0 <= ny < MAP_HEIGHT:
+                    # Engel kontrolü (sadece known_map'e göre!)
+                    if self.known_map[nx][ny] != 0:
+                        continue
+
+                    new_g = g_score[current] + 1
+                    if new_g < g_score.get((nx, ny), float("inf")):
+                        came_from[(nx, ny)] = current
+                        g_score[(nx, ny)] = new_g
+                        f_score = new_g + self.heuristic((nx, ny), end)
+                        heapq.heappush(queue, (f_score, (nx, ny)))
+
+        return []
+
+    def recalculate_path(self, initial=False):
+        self.path = self.find_path_astar()
+        if not initial:
+            self.replans += 1
+        if not self.path:
+            print("Yol tıkandı veya bulunamadı!")
+
+    def has_line_of_sight(self, start, end):
+        """Bresenham's Line Algorithm ile görüş hattı kontrolü."""
+        x0, y0 = start
+        x1, y1 = end
         
-        draw_map(screen, my_map)
-        if path:
-            draw_path(screen, path) 
-        draw_car(screen, car_position)
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        x, y = x0, y0
         
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        
+        err = dx - dy
+        
+        while True:
+            # Başlangıç ve bitiş noktası hariç ara noktalara bak
+            if (x, y) != start and (x, y) != end:
+                # Harita sınırları kontrolü (teorik olarak gerekmez ama güvenli)
+                if 0 <= x < MAP_WIDTH and 0 <= y < MAP_HEIGHT:
+                    # Engel varsa (Duvar=1 veya Gizli=2) görüşü engeller
+                    if self.real_map[x][y] != 0:
+                        return False
+            
+            if (x, y) == end:
+                return True
+                
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x += sx
+            if e2 < dx:
+                err += dx
+                y += sy
+
+
+    def generate_obstacle_properties(self):
+        """Sonradan eklenen engellere rastgele özellik (renk) atar."""
+        # Rastgele renkler (Pastel tonlar tercih edildi)
+        colors = [
+            (255, 159, 28),   # Turuncu
+            (255, 99, 132),   # Pembe
+            (54, 162, 235),   # Mavi
+            (153, 102, 255),  # Mor
+            (75, 192, 192),   # Turkuaz
+            (255, 205, 86)    # Sarı
+        ]
+        chosen_color = random.choice(colors)
+        
+        # JSON objesi (Python Dict) şeklinde dönüş
+        return {
+            "color": chosen_color,
+            "type": "dynamic_obstacle"
+        }
+
+    def log_encounter(self, car_pos, obstacle_pos, props):
+        """Aracın pozisyonunu ve engelin pozisyonunu gösteren fonksiyon."""
+        print(f"[ENCOUNTER] Car Pos: {car_pos} | Obstacle Pos: {obstacle_pos} | Properties: {props}")
+
+    def check_sensors(self):
+        """Manhattan (elmas) sensör alanı ile engel keşfi."""
+        sensor_range = 4  # sunumda daha iyi görünsün diye 3 yerine 4 yaptım
+        replan_needed = False
+
+        cx, cy = self.car_pos
+
+        for x in range(cx - sensor_range, cx + sensor_range + 1):
+            for y in range(cy - sensor_range, cy + sensor_range + 1):
+                if 0 <= x < MAP_WIDTH and 0 <= y < MAP_HEIGHT:
+                    # Elmas alan: |dx| + |dy| <= r
+                    if abs(x - cx) + abs(y - cy) > sensor_range:
+                        continue
+
+                    # GÖRÜŞ HATTI KONTROLÜ (YENİ EKLENEN KISIM)
+                    if not self.has_line_of_sight(self.car_pos, (x, y)):
+                        continue
+
+                    # Gerçekte gizli engel var ama biz bilmiyorsak
+                    if self.real_map[x][y] == 2 and self.known_map[x][y] == 0:
+                        self.known_map[x][y] = 1  # keşfedildi -> artık bilinen engel
+                        self.discovered_obstacles += 1
+                        
+                        # Özellik atama ve loglama (YENİ)
+                        props = self.generate_obstacle_properties()
+                        self.obstacle_props[(x, y)] = props
+                        self.log_encounter(self.car_pos, (x, y), props)
+
+                        if (x, y) in self.path:
+                            replan_needed = True
+
+        if replan_needed:
+            print("Engel tespit edildi! Rota yeniden oluşturuluyor...")
+            self.recalculate_path()
+
+    def move_car(self):
+        if self.path and len(self.path) > 1:
+            next_step = self.path[1]
+            nx, ny = next_step
+
+            # Güvenlik kontrolü: gerçek dünyada engel varsa "çarptık"
+            if self.real_map[nx][ny] != 0:
+                # Araç bunu artık öğrenir:
+                self.known_map[nx][ny] = 1
+                self.discovered_obstacles += 1
+                self.recalculate_path()
+            else:
+                self.car_pos = next_step
+                self.path.pop(0)
+                self.steps += 1
+
+    def draw_hud(self):
+        path_len = len(self.path) if self.path else 0
+        lines = [
+            f"[SPACE] Pause: {self.paused}",
+            f"[R] Reset",
+            f"Steps: {self.steps}",
+            f"Replans: {self.replans}",
+            f"Discovered obstacles: {self.discovered_obstacles}",
+            f"Path length: {path_len}",
+        ]
+        y = 6
+        for line in lines:
+            surf = self.font.render(line, True, COLOR_TEXT)
+            self.screen.blit(surf, (6, y))
+            y += 18
+
+    def draw(self):
+        self.screen.fill(COLOR_BG)
+
+        # 1) Izgara + Bilinen engeller (known_map)
+        for x in range(MAP_WIDTH):
+            for y in range(MAP_HEIGHT):
+                rect = (x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                pygame.draw.rect(self.screen, COLOR_GRID, rect, 1)
+
+                if self.known_map[x][y] == 1:
+                    # Rengi belirle: Özelliği varsa onu kullan, yoksa standart duvar rengi
+                    draw_color = COLOR_WALL
+                    if (x, y) in self.obstacle_props:
+                        draw_color = self.obstacle_props[(x, y)]["color"]
+                        
+                    pygame.draw.rect(self.screen, draw_color, rect)
+
+        # 2) Yol
+        if self.path:
+            for p in self.path:
+                rect = (p[0] * CELL_SIZE, p[1] * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                pygame.draw.rect(self.screen, COLOR_PATH, rect)
+
+        # 3) Başlangıç / Bitiş
+        pygame.draw.rect(
+            self.screen,
+            COLOR_START,
+            (self.start_pos[0] * CELL_SIZE, self.start_pos[1] * CELL_SIZE, CELL_SIZE, CELL_SIZE),
+        )
+        pygame.draw.rect(
+            self.screen,
+            COLOR_END,
+            (self.end_pos[0] * CELL_SIZE, self.end_pos[1] * CELL_SIZE, CELL_SIZE, CELL_SIZE),
+        )
+
+        # 4) Araba
+        car_rect = (self.car_pos[0] * CELL_SIZE, self.car_pos[1] * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+        pygame.draw.rect(self.screen, COLOR_CAR, car_rect)
+
+        # 5) Sensör alanı (görsel çerçeve)
+        sensor_range = 4
+        sensor_rect = (
+            (self.car_pos[0] - sensor_range) * CELL_SIZE,
+            (self.car_pos[1] - sensor_range) * CELL_SIZE,
+            (sensor_range * 2 + 1) * CELL_SIZE,
+            (sensor_range * 2 + 1) * CELL_SIZE,
+        )
+        pygame.draw.rect(self.screen, COLOR_SENSOR, sensor_rect, 1)
+
+        # 6) HUD
+        self.draw_hud()
+
         pygame.display.flip()
-        clock.tick(60) 
-        
-    pygame.quit()
-    sys.exit()
+
+    def handle_mouse_wall(self):
+        if pygame.mouse.get_pressed()[0]:
+            mx, my = pygame.mouse.get_pos()
+            grid_x, grid_y = mx // CELL_SIZE, my // CELL_SIZE
+            if 0 <= grid_x < MAP_WIDTH and 0 <= grid_y < MAP_HEIGHT:
+                # Gerçek dünyaya sabit duvar ekliyoruz (1)
+                self.real_map[grid_x][grid_y] = 1
+                self.known_map[grid_x][grid_y] = 1
+
+                if (grid_x, grid_y) in self.path:
+                    self.recalculate_path()
+
+    def run(self):
+        while self.running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_r:
+                        self.initialize_game()
+                    elif event.key == pygame.K_SPACE:
+                        self.paused = not self.paused
+
+            # Mouse ile duvar ekleme
+            self.handle_mouse_wall()
+
+            if not self.paused:
+                self.check_sensors()
+                self.move_car()
+
+            self.draw()
+            self.clock.tick(FPS)
+
+        pygame.quit()
+        sys.exit()
+
 
 if __name__ == "__main__":
-    main()
-
-
-# To run the game (at least in linux) use this command:
-# SDL_VIDEODRIVER=wayland python3 map_visualization.py
-# Consider using D lite algorith for path finding
+    game = PathfindingVisualizer()
+    game.run()
