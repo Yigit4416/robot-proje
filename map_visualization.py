@@ -2,6 +2,8 @@ import pygame
 import sys
 import heapq
 import random
+import time
+import math
 
 # --- AYARLAR (CONSTANTS) ---
 CELL_SIZE = 10
@@ -9,7 +11,7 @@ MAP_WIDTH = 80
 MAP_HEIGHT = 60
 WINDOW_WIDTH = MAP_WIDTH * CELL_SIZE
 WINDOW_HEIGHT = MAP_HEIGHT * CELL_SIZE
-FPS = 30
+FPS = 10  # Reduced speed for visibility
 
 # Renkler (R, G, B)
 COLOR_BG = (20, 20, 20)
@@ -37,6 +39,10 @@ class PathfindingVisualizer:
 
         self.running = True
         self.paused = False
+        
+        # LLM Simulation State
+        self.llm_queue = []  # List of {timestamp, props}
+        self.speed_modifier = 1.0  # 1.0=Full, 0.5=Half, 0.0=Stop
 
         self.real_map = []
         self.known_map = []
@@ -187,25 +193,114 @@ class PathfindingVisualizer:
                 err += dx
                 y += sy
 
+    """
+    Obstacle Templates
+    """
+    OBSTACLE_TEMPLATES = [
+        {
+            "type": "puddle",
+            "visual": "reflective liquid surface, looks shallow",
+            "physics": "liquid, low friction",
+            "score": 40
+        },
+        {
+            "type": "mud_patch",
+            "visual": "brown sticky surface, rough texture",
+            "physics": "viscous, high resistance",
+            "score": 60
+        },
+        {
+            "type": "big_rock",
+            "visual": "large grey solid object",
+            "physics": "solid, immovable",
+            "score": 90
+        },
+        {
+            "type": "fire_pit",
+            "visual": "burning wood, smoke",
+            "physics": "hot, dangerous",
+            "score": 95
+        },
+        {
+            "type": "shallow_water",
+            "visual": "clear water, seeing bottom",
+            "physics": "liquid, drag",
+            "score": 30
+        }
+    ]
 
     def generate_obstacle_properties(self):
-        """Sonradan eklenen engellere rastgele özellik (renk) atar."""
-        # Rastgele renkler (Pastel tonlar tercih edildi)
-        colors = [
-            (255, 159, 28),   # Turuncu
-            (255, 99, 132),   # Pembe
-            (54, 162, 235),   # Mavi
-            (153, 102, 255),  # Mor
-            (75, 192, 192),   # Turkuaz
-            (255, 205, 86)    # Sarı
-        ]
-        chosen_color = random.choice(colors)
+        """Sonradan eklenen engellere rastgele özellik atar."""
+        base_prop = random.choice(self.OBSTACLE_TEMPLATES)
         
-        # JSON objesi (Python Dict) şeklinde dönüş
-        return {
-            "color": chosen_color,
-            "type": "dynamic_obstacle"
-        }
+        # Create a unique copy
+        props = base_prop.copy()
+        
+        # ID generation
+        props["id"] = f"obj_{random.randint(1000, 9999)}"
+        
+        # Calculate Color based on Score: Green (0) -> Red (100)
+        # Score is 0-100.
+        # Red increases with score, Green decreases with score.
+        score = props.get("score", 50)
+        red_val = int(255 * (score / 100))
+        green_val = int(255 * (1 - (score / 100)))
+        
+        # Clamp values
+        red_val = max(0, min(255, red_val))
+        green_val = max(0, min(255, green_val))
+        
+        props["color"] = (red_val, green_val, 0)
+        
+        return props
+
+    def treat_as_wall(self, props):
+        """Returns True if the obstacle is considered a wall (score > 80)."""
+        return props.get("score", 0) > 80
+
+    def send_to_llm(self, props):
+        """Simulate sending to LLM for evaluation."""
+        print(f"[LLM] Sending {props['id']} ({props['type']}) for evaluation...")
+        # Add to processing queue with current time and random duration
+        # Evaluation takes between 0.3s and 2.0s to simulate varying complexity
+        duration = random.uniform(0.1, 0.2)
+        self.llm_queue.append({
+            "start_time": time.time(),
+            "duration": duration, 
+            "props": props
+        })
+
+    def check_llm_status(self):
+        """Checks the status of LLM evaluations and adjusts speed."""
+        if not self.llm_queue:
+            self.speed_modifier = 1.0
+            return
+
+        current_time = time.time()
+        active_items = []
+        max_duration_so_far = 0
+
+        for item in self.llm_queue:
+            elapsed = current_time - item["start_time"]
+            max_duration_so_far = max(max_duration_so_far, elapsed)
+            
+            if elapsed < item["duration"]:
+                active_items.append(item)
+            else:
+                # Evaluation complete
+                print(f"[LLM] Evaluation complete for {item['props']['id']}. Verdict: Safe to pass.")
+                # Here we could update known_map if LLM decided it was actually dangerous,
+                # but for this logic, "Pass" means we don't mark it as a wall (keep known_map=0).
+                
+        self.llm_queue = active_items
+        
+        # Speed Control Logic
+        if max_duration_so_far > 1.0:
+            self.speed_modifier = 0.0 # STOP
+        elif max_duration_so_far > 0.5:
+            self.speed_modifier = 0.5 # SLOW
+        else:
+            self.speed_modifier = 1.0
 
     def log_encounter(self, car_pos, obstacle_pos, props):
         """Aracın pozisyonunu ve engelin pozisyonunu gösteren fonksiyon."""
@@ -225,38 +320,77 @@ class PathfindingVisualizer:
                     if abs(x - cx) + abs(y - cy) > sensor_range:
                         continue
 
-                    # GÖRÜŞ HATTI KONTROLÜ (YENİ EKLENEN KISIM)
+                    # GÖRÜŞ HATTI KONTROLÜ
                     if not self.has_line_of_sight(self.car_pos, (x, y)):
                         continue
 
                     # Gerçekte gizli engel var ama biz bilmiyorsak
                     if self.real_map[x][y] == 2 and self.known_map[x][y] == 0:
-                        self.known_map[x][y] = 1  # keşfedildi -> artık bilinen engel
-                        self.discovered_obstacles += 1
+                        # Eğer bu engel zaten kayıtlı değilse özellik üret
+                        if (x, y) not in self.obstacle_props:
+                            props = self.generate_obstacle_properties()
+                            self.obstacle_props[(x, y)] = props
+                            self.log_encounter(self.car_pos, (x, y), props)
+                        else:
+                            props = self.obstacle_props[(x, y)]
+
+                        # Karar Mekanizması
+                        if self.treat_as_wall(props):
+                             # Yüksek skor -> Kesin Engel
+                            self.known_map[x][y] = 1 
+                            self.discovered_obstacles += 1
+                            if (x, y) in self.path:
+                                replan_needed = True
+                        else:
+                            # Düşük skor -> LLM'e sor, ama hemen engel işaretleme
+                            # Sadece ilk görüşte gönder (daha önce gönderildiyse tekrar gönderme)
+                            # Simülasyon gereği: bu koordinat için aktif bir değerlendirme yoksa gönder
+                            is_evaluating = any(item['props']['id'] == props['id'] for item in self.llm_queue)
+                            if not is_evaluating:
+                                self.send_to_llm(props)
                         
-                        # Özellik atama ve loglama (YENİ)
-                        props = self.generate_obstacle_properties()
-                        self.obstacle_props[(x, y)] = props
-                        self.log_encounter(self.car_pos, (x, y), props)
-
-                        if (x, y) in self.path:
-                            replan_needed = True
-
         if replan_needed:
             print("Engel tespit edildi! Rota yeniden oluşturuluyor...")
             self.recalculate_path()
 
     def move_car(self):
+        # Hız kontrolü
+        self.check_llm_status()
+        
+        if self.speed_modifier == 0.0:
+            return # Stop
+            
+        # Eğer yarı hızdaysa, basitçe her 2 frame'de bir hareket etmesini sağlayabiliriz
+        # Veya şans faktörü koyarız
+        if self.speed_modifier == 0.5:
+             if random.random() < 0.5:
+                 return # Skip this move frame
+
         if self.path and len(self.path) > 1:
             next_step = self.path[1]
             nx, ny = next_step
 
             # Güvenlik kontrolü: gerçek dünyada engel varsa "çarptık"
             if self.real_map[nx][ny] != 0:
-                # Araç bunu artık öğrenir:
-                self.known_map[nx][ny] = 1
-                self.discovered_obstacles += 1
-                self.recalculate_path()
+                # Buraya girdiysek, ya unseen wall ya da düşük skorlu bir engeldir.
+                # Düşük skorlu ise, "geçilebilir" (traversable) olduğu için çarpmayız, üstünden geçeriz.
+                # Ancak 'Duvar' (1) veya Score>80 ise çarparız.
+                
+                is_hard_obstacle = (self.real_map[nx][ny] == 1) # Sabit duvar
+                if not is_hard_obstacle and (nx, ny) in self.obstacle_props:
+                    if self.treat_as_wall(self.obstacle_props[(nx, ny)]):
+                        is_hard_obstacle = True
+                
+                if is_hard_obstacle:
+                    # Çarpma!
+                    self.known_map[nx][ny] = 1
+                    self.discovered_obstacles += 1
+                    self.recalculate_path()
+                else:
+                    # Geçilebilir engel (low score) - İlerle
+                    self.car_pos = next_step
+                    self.path.pop(0)
+                    self.steps += 1
             else:
                 self.car_pos = next_step
                 self.path.pop(0)
@@ -267,10 +401,13 @@ class PathfindingVisualizer:
         lines = [
             f"[SPACE] Pause: {self.paused}",
             f"[R] Reset",
+            f"[R] Reset",
             f"Steps: {self.steps}",
             f"Replans: {self.replans}",
-            f"Discovered obstacles: {self.discovered_obstacles}",
-            f"Path length: {path_len}",
+            f"Discovered: {self.discovered_obstacles}",
+            f"Path Len: {path_len}",
+            f"Speed Mod: {self.speed_modifier:.1f}x",
+            f"LLM Queue: {len(self.llm_queue)}",
         ]
         y = 6
         for line in lines:
@@ -287,7 +424,8 @@ class PathfindingVisualizer:
                 rect = (x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
                 pygame.draw.rect(self.screen, COLOR_GRID, rect, 1)
 
-                if self.known_map[x][y] == 1:
+                    # Draw obstacles if they are known walls OR discovered dynamic obstacles
+                if self.known_map[x][y] == 1 or (x, y) in self.obstacle_props:
                     # Rengi belirle: Özelliği varsa onu kullan, yoksa standart duvar rengi
                     draw_color = COLOR_WALL
                     if (x, y) in self.obstacle_props:
