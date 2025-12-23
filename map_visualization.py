@@ -46,6 +46,9 @@ class PathfindingVisualizer:
 
         self.real_map = []
         self.known_map = []
+        
+        # Karar Önbellekleme (Decision Caching)
+        self.decision_cache = {} # type_name -> score
 
         self.start_pos = (2, 2)
         self.end_pos = (MAP_WIDTH - 3, MAP_HEIGHT - 3)
@@ -140,10 +143,29 @@ class PathfindingVisualizer:
 
                 if 0 <= nx < MAP_WIDTH and 0 <= ny < MAP_HEIGHT:
                     # Engel kontrolü (sadece known_map'e göre!)
-                    if self.known_map[nx][ny] != 0:
+                    # 1 = Kesin Duvar
+                    if self.known_map[nx][ny] == 1:
                         continue
+                    
+                    # Semantik Maliyet Hesaplama
+                    cell_cost = 1
+                    if (nx, ny) in self.obstacle_props:
+                        props = self.obstacle_props[(nx, ny)]
+                        score = props.get("score", 0)
+                        
+                        # Score > 80 ise burayı duvar gibi gör (sonsuz maliyet)
+                        if score > 80:
+                            continue
+                        
+                        # Ağırlıklı Maliyet: 1 + (Score / 10)
+                        # Örn: Mud (60) -> 7, Puddle (40) -> 5
+                        cell_cost = 1 + (score / 10)
+                    
+                    # Eğer LLM henüz cevap vermediyse ve cache'de yoksa, 
+                    # araba burayı geçici olarak "duvar" (riskli) görebilir.
+                    # Ancak biz şimdilik sadece 'bilinen' skorları uyguluyoruz.
 
-                    new_g = g_score[current] + 1
+                    new_g = g_score[current] + cell_cost
                     if new_g < g_score.get((nx, ny), float("inf")):
                         came_from[(nx, ny)] = current
                         g_score[(nx, ny)] = new_g
@@ -288,9 +310,24 @@ class PathfindingVisualizer:
                 active_items.append(item)
             else:
                 # Evaluation complete
-                print(f"[LLM] Evaluation complete for {item['props']['id']}. Verdict: Safe to pass.")
-                # Here we could update known_map if LLM decided it was actually dangerous,
-                # but for this logic, "Pass" means we don't mark it as a wall (keep known_map=0).
+                res_props = item["props"]
+                res_score = res_props.get("score", 50)
+                
+                print(f"[LLM] Evaluation complete for {res_props['id']}. Verdict: Score {res_score}")
+                
+                # Cache'e kaydet (type bazlı)
+                obs_type = res_props.get("type")
+                if obs_type:
+                    self.decision_cache[obs_type] = res_score
+                    print(f"[CACHE] Saved {obs_type} -> {res_score}")
+                
+                # Tüm aynı tipteki engellerin skorlarını güncelle (isteğe bağlı ama mantıklı)
+                for pos, p in self.obstacle_props.items():
+                    if p.get("type") == obs_type:
+                        p["score"] = res_score
+                
+                # Rota yeniden hesapla (yeni maliyet/skor geldi!)
+                self.recalculate_path()
                 
         self.llm_queue = active_items
         
@@ -335,16 +372,36 @@ class PathfindingVisualizer:
                             props = self.obstacle_props[(x, y)]
 
                         # Karar Mekanizması
-                        if self.treat_as_wall(props):
+                        obs_type = props.get("type")
+                        
+                        # 1. Cache Kontrolü
+                        if obs_type in self.decision_cache:
+                            # Bilinen tip -> Hemen skoru uygula
+                            cached_score = self.decision_cache[obs_type]
+                            if props.get("score") != cached_score:
+                                props["score"] = cached_score
+                                print(f"[CACHE] Hit! Using score {cached_score} for {obs_type}")
+                                
+                                # Eğer yüksek skorsa duvar yap
+                                if cached_score > 80:
+                                    self.known_map[x][y] = 1
+                                    self.discovered_obstacles += 1
+                                    if (x, y) in self.path:
+                                        replan_needed = True
+                                else:
+                                    # Düşük skorsa sadece reroute gerekebilir (maliyet değişti)
+                                    replan_needed = True
+
+                        # 2. Eğer Cache'de yoksa ve Skor yüksekse (Duvar)
+                        elif self.treat_as_wall(props):
                              # Yüksek skor -> Kesin Engel
                             self.known_map[x][y] = 1 
                             self.discovered_obstacles += 1
                             if (x, y) in self.path:
                                 replan_needed = True
+                        
+                        # 3. Eğer Cache'de yoksa ve Skor düşükse -> LLM'e Sor
                         else:
-                            # Düşük skor -> LLM'e sor, ama hemen engel işaretleme
-                            # Sadece ilk görüşte gönder (daha önce gönderildiyse tekrar gönderme)
-                            # Simülasyon gereği: bu koordinat için aktif bir değerlendirme yoksa gönder
                             is_evaluating = any(item['props']['id'] == props['id'] for item in self.llm_queue)
                             if not is_evaluating:
                                 self.send_to_llm(props)
@@ -408,6 +465,7 @@ class PathfindingVisualizer:
             f"Path Len: {path_len}",
             f"Speed Mod: {self.speed_modifier:.1f}x",
             f"LLM Queue: {len(self.llm_queue)}",
+            f"Cache Hits: {len(self.decision_cache)}",
         ]
         y = 6
         for line in lines:
@@ -428,10 +486,20 @@ class PathfindingVisualizer:
                 if self.known_map[x][y] == 1 or (x, y) in self.obstacle_props:
                     # Rengi belirle: Özelliği varsa onu kullan, yoksa standart duvar rengi
                     draw_color = COLOR_WALL
+                    is_cached = False
+                    
                     if (x, y) in self.obstacle_props:
-                        draw_color = self.obstacle_props[(x, y)]["color"]
-                        
+                        props = self.obstacle_props[(x, y)]
+                        draw_color = props["color"]
+                        # Eğer tip cache'de varsa görsel bir fark ekleyebiliriz (örn: çerçeve)
+                        if props.get("type") in self.decision_cache:
+                            is_cached = True
+                    
                     pygame.draw.rect(self.screen, draw_color, rect)
+                    
+                    if is_cached:
+                        # Cache'lenmişse beyaz bir iç çerçeve çiz
+                        pygame.draw.rect(self.screen, (255, 255, 255), rect, 1)
 
         # 2) Yol
         if self.path:

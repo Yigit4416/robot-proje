@@ -40,13 +40,18 @@ Proje temel olarak `PathfindingVisualizer` sınıfı üzerinden yürütülür.
     *   **Mavi:** Robot.
     *   **Sarı Çerçeve:** Sensör menzili.
 
-### Dinamik Engel Özellikleri (Dynamic Properties)
-Simülasyon, robotun "sonradan keşfettiği" (gizli) engellere dinamik özellikler atayabilir.
+### Semantik Engel Analizi ve LLM Entegrasyonu (Yeni)
+Simülasyon, engelleri sadece "geçilmez bloklar" olarak değil, farklı zorluk derecelerine sahip "semantik objeler" olarak değerlendirir.
 
-*   **Özellik Atama (`generate_obstacle_properties`):** Bir engel keşfedildiğinde, sisteme JSON formatında (Python Dictionary) rastgele bir renk ve tip atanır.
-*   **Görselleştirme:** Keşfedilen engeller, atanan bu rastgele renklere (Turuncu, Pembe, Turkuaz vb.) boyanır. Sabit duvarlar ise standart Kırmızı renkte kalır.
-*   **Loglama (`log_encounter`):** Robot yeni bir engel keşfettiğinde, terminale robotun konumu, engelin konumu ve atanan özellikleri içeren bir log basılır.
-    *   Örnek: `[ENCOUNTER] Car Pos: (10, 15) | Obstacle Pos: (12, 16) | Properties: {'color': (255, 159, 28), 'type': 'dynamic_obstacle'}`
+1.  **Semantik Analiz:** Robot bir engel keşfettiğinde (örn: su birikintisi, çamur), bu engelin fiziksel özelliklerini analiz eder ve LLM'e (Büyük Dil Modeli) bir risk skoru (0-100) danışır.
+2.  **Ağırlıklı A* (Weighted A*):** Geleneksel A*'ın aksine, her kare 1 maliyetinde değildir. LLM'den gelen skor, karenin geçiş maliyetini etkiler: `Maliyet = 1 + (Skor / 10)`. Robot, eğer etraftan dolaşmak "çamurun içinden geçmekten" daha maliyetliyse, engelin içinden geçmeyi tercih edebilir.
+3.  **Karar Önbellekleme (Decision Caching):** LLM sorguları zaman alabileceği için robot daha önce analiz ettiği engel tiplerini hafızasına kaydeder. Aynı tip engelle tekrar karşılaştığında saniyeler içinde karar verir ve akıcılığı korur.
+4.  **Adaptif Hız Kontrolü:** Karar verme süreci uzarsa (LLM bekleme süresi > 0.5s), robot güvenli geçiş için yavaşlar veya tamamen durur.
+
+#### Loglama (`log_encounter` & `LLM` logs):
+Robot yeni bir engel keşfettiğinde veya LLM'den cevap geldiğinde terminale detaylı bilgi basılır:
+*   `[LLM] Evaluation complete for obj_123. Verdict: Score 40`
+*   `[CACHE] Saved puddle -> 40`
 
 ## 4. Kullanım
 
