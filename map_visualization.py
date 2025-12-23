@@ -4,6 +4,9 @@ import heapq
 import random
 import time
 import math
+import threading
+import datetime
+from ollama import OllamaAnalyzer
 
 # --- AYARLAR (CONSTANTS) ---
 CELL_SIZE = 10
@@ -32,7 +35,7 @@ class PathfindingVisualizer:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-        pygame.display.set_caption("Otonom Araç A* Simülasyonu (Sunum Sürümü)")
+        pygame.display.set_caption("Bilinmeyen Ortamda Otonom Robot Navigasyonu")
         self.clock = pygame.time.Clock()
 
         self.font = pygame.font.SysFont("consolas", 16)
@@ -40,8 +43,13 @@ class PathfindingVisualizer:
         self.running = True
         self.paused = False
         
-        # LLM Simulation State
-        self.llm_queue = []  # List of {timestamp, props}
+        # LLM Integration
+        self.analyzer = OllamaAnalyzer()
+        self.llm_results = [] # Thread-safe results queue
+        self.llm_lock = threading.Lock()
+        
+        # LLM Simulation State (Now used for tracking real threads)
+        self.llm_queue = []  # List of {start_time, thread, props}
         self.speed_modifier = 1.0  # 1.0=Full, 0.5=Half, 0.0=Stop
 
         self.real_map = []
@@ -49,6 +57,8 @@ class PathfindingVisualizer:
         
         # Karar Önbellekleme (Decision Caching)
         self.decision_cache = {} # type_name -> score
+        self.cache_hit_count = 0
+        self.processed_cache_ids = set()
 
         self.start_pos = (2, 2)
         self.end_pos = (MAP_WIDTH - 3, MAP_HEIGHT - 3)
@@ -97,6 +107,7 @@ class PathfindingVisualizer:
                 self.real_map[rx][ry] = 2
 
         self.recalculate_path(initial=True)
+        self.game_start_time = time.time()
 
     def add_wall_line(self, start, end):
         x1, y1 = start
@@ -248,6 +259,30 @@ class PathfindingVisualizer:
             "visual": "clear water, seeing bottom",
             "physics": "liquid, drag",
             "score": 30
+        },
+        {
+            "type": "dry_grass",
+            "visual": "yellow dried grass",
+            "physics": "soft, easy to traverse",
+            "score": 10
+        },
+        {
+            "type": "thick_swamp",
+            "visual": "deep muddy water with vegetation",
+            "physics": "very viscous, high sinking risk",
+            "score": 75
+        },
+        {
+            "type": "deep_sand",
+            "visual": "loose fine sand, shifting surface",
+            "physics": "unstable, wheels might dig in",
+            "score": 70
+        },
+        {
+            "type": "deep_pit",
+            "visual": "dark hole with no visible bottom",
+            "physics": "empty space, fall risk",
+            "score": 100
         }
     ]
 
@@ -281,19 +316,95 @@ class PathfindingVisualizer:
         return props.get("score", 0) > 80
 
     def send_to_llm(self, props):
-        """Simulate sending to LLM for evaluation."""
-        print(f"[LLM] Sending {props['id']} ({props['type']}) for evaluation...")
-        # Add to processing queue with current time and random duration
-        # Evaluation takes between 0.3s and 2.0s to simulate varying complexity
-        duration = random.uniform(0.1, 0.2)
+        """Send to real Gemini for evaluation using threading."""
+        print(f"[LLM] Requesting analysis for {props['id']} ({props['type']})...")
+        
+        def thread_target():
+            result = self.analyzer.analyze_obstacle(props)
+            with self.llm_lock:
+                self.llm_results.append((props, result))
+
+        thread = threading.Thread(target=thread_target)
+        thread.daemon = True
+        thread.start()
+
         self.llm_queue.append({
             "start_time": time.time(),
-            "duration": duration, 
+            "thread": thread,
             "props": props
         })
 
     def check_llm_status(self):
-        """Checks the status of LLM evaluations and adjusts speed."""
+        """Checks the status of LLM threads and adjusts speed."""
+        # 1. Process results from threads
+        with self.llm_lock:
+            while self.llm_results:
+                res_props, result = self.llm_results.pop(0)
+                
+                if result and "score" in result:
+                    res_score = result["score"]
+                    print(f"[LLM] Gemini Verdict for {res_props['id']}: Score {res_score} ({result.get('rationale', '')})")
+                    
+                    obs_type = res_props.get("type")
+                    if obs_type:
+                        self.decision_cache[obs_type] = res_score
+                        print(f"[CACHE] Saved {obs_type} -> {res_score}")
+                    
+                    # LOGGING TO FILE
+                    try:
+                        # Find the corresponding item in llm_queue to get start_time
+                        # Note: The item might have been removed from llm_queue in step 2 if it finished fast,
+                        # but we need to track it better. 
+                        # Actually, llm_queue is cleaned up in step 2 (below), so it might still be there or we need a better way.
+                        # Ideally, we should pass start_time with the result.
+                        # For now, let's look it up or default to 0.
+                        
+                        start_time = time.time() # Default fallback
+                        for q_item in self.llm_queue:
+                             if q_item['props']['id'] == res_props['id']:
+                                 start_time = q_item['start_time']
+                                 break
+                        
+                        elapsed = time.time() - start_time
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        # Calculate Average Speed (Steps per Second)
+                        total_game_time = time.time() - self.game_start_time
+                        avg_speed = self.steps / total_game_time if total_game_time > 0 else 0
+                        
+                        log_entry = (
+                            f"[{timestamp}] "
+                            f"Model: {self.analyzer.model_id} | "
+                            f"Duration: {elapsed:.2f}s | "
+                            f"LLM Score: {res_score} | "
+                            f"Steps: {self.steps} | "
+                            f"Replans: {self.replans} | "
+                            f"Discovered: {self.discovered_obstacles} | "
+                            f"Path Len: {len(self.path) if self.path else 0} | "
+                            f"Avg Speed: {avg_speed:.2f} steps/s | "
+                            f"Chosen Speed: {self.speed_modifier:.1f}x\n"
+                        )
+                        
+                        with open("log.txt", "a", encoding="utf-8") as f:
+                            f.write(log_entry)
+                    except Exception as e:
+                        print(f"[LOG ERROR] Could not write to log.txt: {e}")
+
+                    for pos, p in self.obstacle_props.items():
+                        if p.get("type") == obs_type:
+                            p["score"] = res_score
+                            # Update Color Dynamically
+                            red_val = int(255 * (res_score / 100))
+                            green_val = int(255 * (1 - (res_score / 100)))
+                            red_val = max(0, min(255, red_val))
+                            green_val = max(0, min(255, green_val))
+                            p["color"] = (red_val, green_val, 0)
+                    
+                    self.recalculate_path()
+                else:
+                    print(f"[LLM] Failed to get valid result for {res_props['id']}. Retrying later if visible.")
+
+        # 2. Update speed based on oldest active thread
         if not self.llm_queue:
             self.speed_modifier = 1.0
             return
@@ -303,32 +414,12 @@ class PathfindingVisualizer:
         max_duration_so_far = 0
 
         for item in self.llm_queue:
-            elapsed = current_time - item["start_time"]
-            max_duration_so_far = max(max_duration_so_far, elapsed)
-            
-            if elapsed < item["duration"]:
+            if item["thread"].is_alive():
+                elapsed = current_time - item["start_time"]
+                max_duration_so_far = max(max_duration_so_far, elapsed)
                 active_items.append(item)
-            else:
-                # Evaluation complete
-                res_props = item["props"]
-                res_score = res_props.get("score", 50)
-                
-                print(f"[LLM] Evaluation complete for {res_props['id']}. Verdict: Score {res_score}")
-                
-                # Cache'e kaydet (type bazlı)
-                obs_type = res_props.get("type")
-                if obs_type:
-                    self.decision_cache[obs_type] = res_score
-                    print(f"[CACHE] Saved {obs_type} -> {res_score}")
-                
-                # Tüm aynı tipteki engellerin skorlarını güncelle (isteğe bağlı ama mantıklı)
-                for pos, p in self.obstacle_props.items():
-                    if p.get("type") == obs_type:
-                        p["score"] = res_score
-                
-                # Rota yeniden hesapla (yeni maliyet/skor geldi!)
-                self.recalculate_path()
-                
+            # Threads that are finished but result not yet popped are handled by is_alive()=False
+            
         self.llm_queue = active_items
         
         # Speed Control Logic
@@ -342,6 +433,30 @@ class PathfindingVisualizer:
     def log_encounter(self, car_pos, obstacle_pos, props):
         """Aracın pozisyonunu ve engelin pozisyonunu gösteren fonksiyon."""
         print(f"[ENCOUNTER] Car Pos: {car_pos} | Obstacle Pos: {obstacle_pos} | Properties: {props}")
+
+    def log_mission_complete(self):
+        """Destination reached logging."""
+        try:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            total_time = time.time() - self.game_start_time
+            avg_speed = self.steps / total_time if total_time > 0 else 0
+            
+            log_entry = (
+                f"[{timestamp}] MISSION COMPLETED | "
+                f"Total Time: {total_time:.2f}s | "
+                f"Total Steps: {self.steps} | "
+                f"Avg Speed: {avg_speed:.2f} steps/s | "
+                f"Replans: {self.replans} | "
+                f"Obstacles Found: {self.discovered_obstacles}\n"
+                f"{'-'*80}\n"
+            )
+            
+            with open("log.txt", "a", encoding="utf-8") as f:
+                f.write(log_entry)
+            print("[LOG] Mission completion logged.")
+            
+        except Exception as e:
+            print(f"[LOG ERROR] Could not write mission log: {e}")
 
     def check_sensors(self):
         """Manhattan (elmas) sensör alanı ile engel keşfi."""
@@ -376,25 +491,35 @@ class PathfindingVisualizer:
                         
                         # 1. Cache Kontrolü
                         if obs_type in self.decision_cache:
+                            # Only count if we haven't processed this object ID yet
+                            if props.get("id") not in self.processed_cache_ids:
+                                self.cache_hit_count += 1
+                                self.processed_cache_ids.add(props.get("id"))
+                                
                             # Bilinen tip -> Hemen skoru uygula
                             cached_score = self.decision_cache[obs_type]
                             if props.get("score") != cached_score:
                                 props["score"] = cached_score
-                                print(f"[CACHE] Hit! Using score {cached_score} for {obs_type}")
+                                # Color update happens in draw loop or we can do it here too, but mostly visual.
                                 
-                                # Eğer yüksek skorsa duvar yap
-                                if cached_score > 80:
-                                    self.known_map[x][y] = 1
-                                    self.discovered_obstacles += 1
-                                    if (x, y) in self.path:
-                                        replan_needed = True
-                                else:
-                                    # Düşük skorsa sadece reroute gerekebilir (maliyet değişti)
+                            # LOGGING DECISION
+                            if cached_score > 80:
+                                print(f"[DECISION] {obs_type} (Score {cached_score}) -> IMPASSABLE. Treating as WALL. Rerouting.")
+                                self.known_map[x][y] = 1
+                                self.discovered_obstacles += 1
+                                if (x, y) in self.path:
+                                    replan_needed = True
+                            else:
+                                cost_increase = 1 + (cached_score / 10)
+                                print(f"[DECISION] {obs_type} (Score {cached_score}) -> TRAVERSABLE (Cost {cost_increase:.1f}). Checking if shorter path exists...")
+                                # Düşük skorsa sadece reroute gerekebilir (maliyet değişti)
+                                if (x, y) in self.path:
                                     replan_needed = True
 
                         # 2. Eğer Cache'de yoksa ve Skor yüksekse (Duvar)
                         elif self.treat_as_wall(props):
                              # Yüksek skor -> Kesin Engel
+                            print(f"[DECISION] Unknown High-Score Object (Score {props.get('score')}) -> IMPASSABLE. Treating as WALL.")
                             self.known_map[x][y] = 1 
                             self.discovered_obstacles += 1
                             if (x, y) in self.path:
@@ -404,10 +529,11 @@ class PathfindingVisualizer:
                         else:
                             is_evaluating = any(item['props']['id'] == props['id'] for item in self.llm_queue)
                             if not is_evaluating:
+                                print(f"[DECISION] Unknown Object {props.get('type')} -> Sending to LLM for analysis...")
                                 self.send_to_llm(props)
                         
         if replan_needed:
-            print("Engel tespit edildi! Rota yeniden oluşturuluyor...")
+            print("[ACTION] Path blocked or costs changed. Recalculating best path...")
             self.recalculate_path()
 
     def move_car(self):
@@ -452,12 +578,18 @@ class PathfindingVisualizer:
                 self.car_pos = next_step
                 self.path.pop(0)
                 self.steps += 1
+            
+            # Check if reached destination
+            if self.car_pos == self.end_pos:
+                print("HEDEF ULAŞILDI! (Goal Reached)")
+                self.log_mission_complete()
+                self.paused = True
 
     def draw_hud(self):
         path_len = len(self.path) if self.path else 0
         lines = [
             f"[SPACE] Pause: {self.paused}",
-            f"[R] Reset",
+            f"Algorithm: Weighted A*",
             f"[R] Reset",
             f"Steps: {self.steps}",
             f"Replans: {self.replans}",
@@ -465,7 +597,7 @@ class PathfindingVisualizer:
             f"Path Len: {path_len}",
             f"Speed Mod: {self.speed_modifier:.1f}x",
             f"LLM Queue: {len(self.llm_queue)}",
-            f"Cache Hits: {len(self.decision_cache)}",
+            f"Cache Hits: {self.cache_hit_count}",
         ]
         y = 6
         for line in lines:
