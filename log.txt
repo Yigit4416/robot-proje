@@ -23,3 +23,43 @@
 [2025-12-23 19:02:01] Model: qwen2.5:1.5b | Duration: 1.90s | LLM Score: 35 | Steps: 80 | Replans: 9 | Discovered: 8 | Path Len: 97 | Avg Speed: 3.73 steps/s | Chosen Speed: 0.0x
 [2025-12-23 19:02:11] MISSION COMPLETED | Total Time: 31.19s | Total Steps: 178 | Avg Speed: 5.71 steps/s | Replans: 13 | Obstacles Found: 19
 --------------------------------------------------------------------------------
+[2025-12-23 21:29:25] Model: qwen2.5:1.5b | Duration: 6.85s | LLM Score: 65 | Steps: 14 | Replans: 0 | Discovered: 0 | Path Len: 161 | Avg Speed: 1.80 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:26] Model: qwen2.5:1.5b | Duration: 8.49s | LLM Score: 70 | Steps: 14 | Replans: 1 | Discovered: 0 | Path Len: 161 | Avg Speed: 1.55 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:27] Model: qwen2.5:1.5b | Duration: 9.81s | LLM Score: 80 | Steps: 14 | Replans: 2 | Discovered: 0 | Path Len: 161 | Avg Speed: 1.35 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:29] Model: qwen2.5:1.5b | Duration: 11.03s | LLM Score: 60 | Steps: 14 | Replans: 3 | Discovered: 0 | Path Len: 161 | Avg Speed: 1.17 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:30] Model: qwen2.5:1.5b | Duration: 12.56s | LLM Score: 45 | Steps: 14 | Replans: 4 | Discovered: 0 | Path Len: 161 | Avg Speed: 1.03 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:32] Model: qwen2.5:1.5b | Duration: 14.29s | LLM Score: 80 | Steps: 14 | Replans: 5 | Discovered: 0 | Path Len: 161 | Avg Speed: 0.90 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:35] Model: qwen2.5:1.5b | Duration: 16.33s | LLM Score: 85 | Steps: 14 | Replans: 6 | Discovered: 0 | Path Len: 161 | Avg Speed: 0.78 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:37] Model: qwen2.5:1.5b | Duration: 18.27s | LLM Score: 80 | Steps: 14 | Replans: 7 | Discovered: 1 | Path Len: 161 | Avg Speed: 0.71 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:40] Model: qwen2.5:1.5b | Duration: 2.53s | LLM Score: 95 | Steps: 29 | Replans: 8 | Discovered: 2 | Path Len: 146 | Avg Speed: 1.26 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:42] Model: qwen2.5:1.5b | Duration: 4.45s | LLM Score: 85 | Steps: 29 | Replans: 9 | Discovered: 2 | Path Len: 146 | Avg Speed: 1.16 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:44] Model: qwen2.5:1.5b | Duration: 5.97s | LLM Score: 80 | Steps: 29 | Replans: 10 | Discovered: 3 | Path Len: 146 | Avg Speed: 1.09 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:47] Model: qwen2.5:1.5b | Duration: 1.73s | LLM Score: 30 | Steps: 52 | Replans: 11 | Discovered: 5 | Path Len: 123 | Avg Speed: 1.74 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:29:59] MISSION COMPLETED | Total Time: 42.45s | Total Steps: 182 | Avg Speed: 4.29 steps/s | Replans: 21 | Obstacles Found: 14
+--------------------------------------------------------------------------------
+[2025-12-23 21:32:19] Model: qwen2.5:1.5b | Duration: 2.42s | LLM Score: 70 | Steps: 11 | Replans: 0 | Discovered: 0 | Path Len: 164 | Avg Speed: 4.00 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:21] Model: qwen2.5:1.5b | Duration: 3.44s | LLM Score: 61 | Steps: 11 | Replans: 1 | Discovered: 0 | Path Len: 164 | Avg Speed: 2.36 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:24] Model: qwen2.5:1.5b | Duration: 2.84s | LLM Score: 81 | Steps: 22 | Replans: 2 | Discovered: 0 | Path Len: 153 | Avg Speed: 2.85 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:26] Model: qwen2.5:1.5b | Duration: 3.96s | LLM Score: 35 | Steps: 22 | Replans: 3 | Discovered: 0 | Path Len: 153 | Avg Speed: 2.30 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:30] Model: qwen2.5:1.5b | Duration: 2.93s | LLM Score: 85 | Steps: 35 | Replans: 4 | Discovered: 0 | Path Len: 140 | Avg Speed: 2.65 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:32] Model: qwen2.5:1.5b | Duration: 4.75s | LLM Score: 81 | Steps: 35 | Replans: 5 | Discovered: 0 | Path Len: 140 | Avg Speed: 2.27 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:34] Model: qwen2.5:1.5b | Duration: 6.46s | LLM Score: 85 | Steps: 35 | Replans: 6 | Discovered: 1 | Path Len: 140 | Avg Speed: 2.01 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:35] Model: qwen2.5:1.5b | Duration: 1.11s | LLM Score: 0 | Steps: 44 | Replans: 7 | Discovered: 2 | Path Len: 131 | Avg Speed: 2.36 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:37] Model: qwen2.5:1.5b | Duration: 2.22s | LLM Score: 31 | Steps: 47 | Replans: 10 | Discovered: 2 | Path Len: 128 | Avg Speed: 2.32 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:44] Model: qwen2.5:1.5b | Duration: 2.02s | LLM Score: 81 | Steps: 106 | Replans: 11 | Discovered: 9 | Path Len: 69 | Avg Speed: 3.83 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:46] Model: qwen2.5:1.5b | Duration: 3.33s | LLM Score: 81 | Steps: 106 | Replans: 12 | Discovered: 10 | Path Len: 69 | Avg Speed: 3.65 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:32:53] MISSION COMPLETED | Total Time: 36.30s | Total Steps: 178 | Avg Speed: 4.90 steps/s | Replans: 18 | Obstacles Found: 25
+--------------------------------------------------------------------------------
+[2025-12-23 21:35:33] Model: qwen2.5:1.5b | Duration: 2.03s | LLM Score: 85 | Steps: 9 | Replans: 0 | Discovered: 0 | Path Len: 166 | Avg Speed: 4.16 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:35:35] Model: qwen2.5:1.5b | Duration: 3.55s | LLM Score: 45 | Steps: 9 | Replans: 1 | Discovered: 0 | Path Len: 166 | Avg Speed: 2.38 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:35:36] Model: qwen2.5:1.5b | Duration: 4.87s | LLM Score: 85 | Steps: 9 | Replans: 2 | Discovered: 0 | Path Len: 166 | Avg Speed: 1.76 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:35:38] Model: qwen2.5:1.5b | Duration: 6.70s | LLM Score: 81 | Steps: 9 | Replans: 3 | Discovered: 1 | Path Len: 166 | Avg Speed: 1.30 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:35:40] Model: qwen2.5:1.5b | Duration: 7.92s | LLM Score: 100 | Steps: 9 | Replans: 4 | Discovered: 1 | Path Len: 166 | Avg Speed: 1.03 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:35:42] Model: qwen2.5:1.5b | Duration: 1.91s | LLM Score: 85 | Steps: 17 | Replans: 5 | Discovered: 2 | Path Len: 158 | Avg Speed: 1.56 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:35:44] Model: qwen2.5:1.5b | Duration: 3.73s | LLM Score: 85 | Steps: 17 | Replans: 6 | Discovered: 3 | Path Len: 158 | Avg Speed: 1.34 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:35:47] Model: qwen2.5:1.5b | Duration: 2.21s | LLM Score: 60 | Steps: 44 | Replans: 8 | Discovered: 8 | Path Len: 131 | Avg Speed: 2.73 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:35:51] Model: qwen2.5:1.5b | Duration: 2.12s | LLM Score: 45 | Steps: 69 | Replans: 9 | Discovered: 16 | Path Len: 106 | Avg Speed: 3.48 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:35:58] Model: qwen2.5:1.5b | Duration: 2.22s | LLM Score: 70 | Steps: 122 | Replans: 13 | Discovered: 32 | Path Len: 59 | Avg Speed: 4.56 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:36:02] Model: qwen2.5:1.5b | Duration: 2.82s | LLM Score: 30 | Steps: 146 | Replans: 15 | Discovered: 37 | Path Len: 35 | Avg Speed: 4.68 steps/s | Chosen Speed: 0.0x
+[2025-12-23 21:36:06] MISSION COMPLETED | Total Time: 34.76s | Total Steps: 182 | Avg Speed: 5.24 steps/s | Replans: 21 | Obstacles Found: 43
+--------------------------------------------------------------------------------

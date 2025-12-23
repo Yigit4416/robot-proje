@@ -234,55 +234,46 @@ class PathfindingVisualizer:
             "type": "puddle",
             "visual": "reflective liquid surface, looks shallow",
             "physics": "liquid, low friction",
-            "score": 40
         },
         {
             "type": "mud_patch",
             "visual": "brown sticky surface, rough texture",
             "physics": "viscous, high resistance",
-            "score": 60
         },
         {
             "type": "big_rock",
             "visual": "large grey solid object",
             "physics": "solid, immovable",
-            "score": 90
         },
         {
             "type": "fire_pit",
             "visual": "burning wood, smoke",
             "physics": "hot, dangerous",
-            "score": 95
         },
         {
             "type": "shallow_water",
             "visual": "clear water, seeing bottom",
             "physics": "liquid, drag",
-            "score": 30
         },
         {
             "type": "dry_grass",
             "visual": "yellow dried grass",
             "physics": "soft, easy to traverse",
-            "score": 10
         },
         {
             "type": "thick_swamp",
             "visual": "deep muddy water with vegetation",
             "physics": "very viscous, high sinking risk",
-            "score": 75
         },
         {
             "type": "deep_sand",
             "visual": "loose fine sand, shifting surface",
             "physics": "unstable, wheels might dig in",
-            "score": 70
         },
         {
             "type": "deep_pit",
             "visual": "dark hole with no visible bottom",
             "physics": "empty space, fall risk",
-            "score": 100
         }
     ]
 
@@ -404,31 +395,50 @@ class PathfindingVisualizer:
                 else:
                     print(f"[LLM] Failed to get valid result for {res_props['id']}. Retrying later if visible.")
 
-        # 2. Update speed based on oldest active thread
-        if not self.llm_queue:
-            self.speed_modifier = 1.0
-            return
-
-        current_time = time.time()
-        active_items = []
-        max_duration_so_far = 0
-
-        for item in self.llm_queue:
-            if item["thread"].is_alive():
-                elapsed = current_time - item["start_time"]
-                max_duration_so_far = max(max_duration_so_far, elapsed)
-                active_items.append(item)
-            # Threads that are finished but result not yet popped are handled by is_alive()=False
+        if self.llm_queue:
+            current_time = time.time()
+            active_items = []
+            max_duration_so_far = 0
             
-        self.llm_queue = active_items
-        
-        # Speed Control Logic
-        if max_duration_so_far > 1.0:
-            self.speed_modifier = 0.0 # STOP
-        elif max_duration_so_far > 0.5:
-            self.speed_modifier = 0.5 # SLOW
+            # Check if any "on path" obstacle is being analyzed
+            waiting_for_path_obstacle = False
+
+            for item in self.llm_queue:
+                if item["thread"].is_alive():
+                    elapsed = current_time - item["start_time"]
+                    max_duration_so_far = max(max_duration_so_far, elapsed)
+                    active_items.append(item)
+                    
+                    # Coordinate extraction using props id logic or direct coordinate storage would be better.
+                    # But here we rely on reverse lookup or just checking if the object ID matches something on our path.
+                    # Since we don't store coords in props directly efficiently for this check, let's reverse look up:
+                    # Actually, better: We know where obstacles are in obstacle_props.
+                    
+                    # Find coordinates for this prop's ID
+                    # This could be slow if map is huge, but fine here.
+                    target_coords = None
+                    for pos, prop in self.obstacle_props.items():
+                         if prop['id'] == item['props']['id']:
+                             target_coords = pos
+                             break
+                    
+                    if target_coords and target_coords in self.path:
+                        waiting_for_path_obstacle = True
+                        print(f"[WAIT] Waiting for on-path obstacle {item['props']['type']} at {target_coords}...")
+
+            self.llm_queue = active_items
+            
+            # Speed Control Logic
+            if waiting_for_path_obstacle:
+                 self.speed_modifier = 0.0 # Force STOP
+            elif max_duration_so_far > 1.0:
+                self.speed_modifier = 0.0 # STOP
+            elif max_duration_so_far > 0.5:
+                self.speed_modifier = 0.5 # SLOW
+            else:
+                self.speed_modifier = 1.0
         else:
-            self.speed_modifier = 1.0
+             self.speed_modifier = 1.0
 
     def log_encounter(self, car_pos, obstacle_pos, props):
         """Aracın pozisyonunu ve engelin pozisyonunu gösteren fonksiyon."""
@@ -511,9 +521,9 @@ class PathfindingVisualizer:
                                     replan_needed = True
                             else:
                                 cost_increase = 1 + (cached_score / 10)
-                                print(f"[DECISION] {obs_type} (Score {cached_score}) -> TRAVERSABLE (Cost {cost_increase:.1f}). Checking if shorter path exists...")
                                 # Düşük skorsa sadece reroute gerekebilir (maliyet değişti)
                                 if (x, y) in self.path:
+                                    print(f"[DECISION] {obs_type} (Score {cached_score}) -> TRAVERSABLE (Cost {cost_increase:.1f}). Checking if shorter path exists...")
                                     replan_needed = True
 
                         # 2. Eğer Cache'de yoksa ve Skor yüksekse (Duvar)
