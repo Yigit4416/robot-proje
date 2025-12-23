@@ -1,6 +1,5 @@
 import requests
 import json
-import os
 
 class OllamaAnalyzer:
     def __init__(self):
