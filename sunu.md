@@ -81,3 +81,22 @@ Raporunuzda kullanabileceğiniz temel kaynak kategorileri şunlardır (Toplam 20
 
 
 ![alt text](image-1.png)
+
+--
+What we have seen:
+We have tried sameller models like qwen3 0.5B but what we have seen is that smaller model down't mean faster response. because when we use qwen2 1.5B it takes a lot less time to answer than qwen3 0.5B. 
+So the tool calling of the model is way more important than we realised that is why we have decided that we need to go with a better tool calling model.
+
+In many cases LLM answer can take too much time because of that we needed to take counter mesures.
+First of all we are working 3 different models at the same time and we made a simple load balancer for this. This load balancer firtst looks for the queue size of each model. If the queue size is same than it will look for he time of each model. If the time is same than it will look for queues last elements time to wait we we will use lesser time model.
+
+And also if an element from a other queue comes again we are just going to ignore it.
+
+Models we are going to use are:
+ministral-3:3b
+qwen3:0.6b
+qwen2.5:1.5b
+
+or maybe qwen3 0.6b is just too slow and ministral can easly handle the load so we decided to just use ministral-3:3b and qwen2.5:1.5b 
+
+We need to edit logs for this too and HUD

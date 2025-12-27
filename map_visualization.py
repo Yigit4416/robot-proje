@@ -3,7 +3,6 @@ import sys
 import heapq
 import random
 import time
-import math
 import threading
 import datetime
 from ollama import OllamaAnalyzer
@@ -14,7 +13,8 @@ MAP_WIDTH = 80
 MAP_HEIGHT = 60
 WINDOW_WIDTH = MAP_WIDTH * CELL_SIZE
 WINDOW_HEIGHT = MAP_HEIGHT * CELL_SIZE
-FPS = 10  # Reduced speed for visibility
+FPS = 60  # Smoother UI, logic is now time-based
+BLOCKS_PER_SECOND = 5.0 # Target speed
 
 # Renkler (R, G, B)
 COLOR_BG = (20, 20, 20)
@@ -36,21 +36,35 @@ class PathfindingVisualizer:
         pygame.init()
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
         pygame.display.set_caption("Bilinmeyen Ortamda Otonom Robot Navigasyonu")
+        pygame.display.set_caption("Bilinmeyen Ortamda Otonom Robot Navigasyonu")
         self.clock = pygame.time.Clock()
+        
+        # LLM Integration
+        self.analyzer = OllamaAnalyzer()
+        
 
         self.font = pygame.font.SysFont("consolas", 16)
+
+        # Warmup (Now Non-Blocking / Threaded)
+        self.warmup_llm()
+        
+        # Reset clock so the time spent in warmup doesn't count as the first frame's dt
+        self.clock.tick(FPS) 
 
         self.running = True
         self.paused = False
         
         # LLM Integration
-        self.analyzer = OllamaAnalyzer()
+        
         self.llm_results = [] # Thread-safe results queue
         self.llm_lock = threading.Lock()
         
         # LLM Simulation State (Now used for tracking real threads)
         self.llm_queue = []  # List of {start_time, thread, props}
-        self.speed_modifier = 1.0  # 1.0=Full, 0.5=Half, 0.0=Stop
+        self.speed_modifier = 0.0  # 0.0 initially (Wait for Warmup)
+        self.is_warming_up = True
+        self.warmup_thread = None
+        self.move_accumulator = 0.0 # Time bucket for movement
 
         self.real_map = []
         self.known_map = []
@@ -69,8 +83,46 @@ class PathfindingVisualizer:
         self.steps = 0
         self.replans = 0
         self.discovered_obstacles = 0
+        self.llm_call_count = 0
 
         self.initialize_game()
+
+    def draw_loading_screen(self, current_task):
+        self.screen.fill(COLOR_BG)
+        
+        # Title
+        title = self.font.render("INITIALIZING AI SYSTEM...", True, COLOR_TEXT)
+        self.screen.blit(title, (WINDOW_WIDTH//2 - title.get_width()//2, WINDOW_HEIGHT//2 - 40))
+        
+        # Task
+        task = self.font.render(f"Warming up: {current_task}", True, (50, 200, 50))
+        self.screen.blit(task, (WINDOW_WIDTH//2 - task.get_width()//2, WINDOW_HEIGHT//2 + 10))
+        
+        pygame.display.flip()
+
+    def warmup_llm(self):
+        """Starts the warmup process in a background thread."""
+        def _warmup_task():
+            print("------------------------------------------------")
+            print("[SYSTEM] Warming up Multi-Model Cluster... (Background)")
+            print("------------------------------------------------")
+            dummy_prop = {"id": "warmup", "type": "warmup_pixel", "visual": "loading", "physics": "none"}
+            
+            for model in self.analyzer.models:
+                print(f"   -> Warming up {model}...")
+                try:
+                    self.analyzer.analyze_obstacle(dummy_prop, forced_model=model)
+                except:
+                    pass
+            
+            print("[SYSTEM] Cluster Warmup Complete. Enabling Engines.")
+            print("------------------------------------------------")
+            self.is_warming_up = False # Signal completion
+            self.speed_modifier = 1.0 # Auto-start
+
+        self.warmup_thread = threading.Thread(target=_warmup_task)
+        self.warmup_thread.daemon = True
+        self.warmup_thread.start()
 
     def create_grid(self, default=0):
         return [[default for _ in range(MAP_HEIGHT)] for _ in range(MAP_WIDTH)]
@@ -78,6 +130,7 @@ class PathfindingVisualizer:
     def initialize_game(self):
         self.real_map = self.create_grid(0)
         self.known_map = self.create_grid(0)
+        self.move_accumulator = 0.0
         
         # Keşfedilen engellerin özellikleri (x, y) -> { "color": ... }
         self.obstacle_props = {} 
@@ -96,7 +149,7 @@ class PathfindingVisualizer:
 
         # Rastgele gizli engeller (real_map'te var, known_map'te yok)
         print("Rastgele gizli engeller oluşturuluyor...")
-        for _ in range(300):
+        for _ in range(600): # Increased from 300 to 600
             rx = random.randint(0, MAP_WIDTH - 1)
             ry = random.randint(0, MAP_HEIGHT - 1)
 
@@ -230,56 +283,64 @@ class PathfindingVisualizer:
     Obstacle Templates
     """
     OBSTACLE_TEMPLATES = [
-        {
-            "type": "puddle",
-            "visual": "reflective liquid surface, looks shallow",
-            "physics": "liquid, low friction",
-        },
-        {
-            "type": "mud_patch",
-            "visual": "brown sticky surface, rough texture",
-            "physics": "viscous, high resistance",
-        },
-        {
-            "type": "big_rock",
-            "visual": "large grey solid object",
-            "physics": "solid, immovable",
-        },
-        {
-            "type": "fire_pit",
-            "visual": "burning wood, smoke",
-            "physics": "hot, dangerous",
-        },
-        {
-            "type": "shallow_water",
-            "visual": "clear water, seeing bottom",
-            "physics": "liquid, drag",
-        },
-        {
-            "type": "dry_grass",
-            "visual": "yellow dried grass",
-            "physics": "soft, easy to traverse",
-        },
-        {
-            "type": "thick_swamp",
-            "visual": "deep muddy water with vegetation",
-            "physics": "very viscous, high sinking risk",
-        },
-        {
-            "type": "deep_sand",
-            "visual": "loose fine sand, shifting surface",
-            "physics": "unstable, wheels might dig in",
-        },
-        {
-            "type": "deep_pit",
-            "visual": "dark hole with no visible bottom",
-            "physics": "empty space, fall risk",
-        }
+        # SAFE (< 50)
+        {"type": "dry_grass", "visual": "yellow dried grass", "physics": "soft, easy to traverse"},
+        {"type": "dirt_path", "visual": "packed dirt trail", "physics": "solid, high friction"},
+        {"type": "asphalt", "visual": "grey cracked pavement", "physics": "hard, excellent grip"},
+        {"type": "gravel", "visual": "small loose stones", "physics": "noisy but traversable"},
+        {"type": "flowers", "visual": "patch of wildflowers", "physics": "soft, negligible resistance"},
+        
+        # CAUTION (50 - 80)
+        {"type": "puddle", "visual": "reflective liquid surface, looks shallow", "physics": "liquid, low friction"},
+        {"type": "mud_patch", "visual": "brown sticky surface, rough texture", "physics": "viscous, high resistance"},
+        {"type": "shallow_water", "visual": "clear water, seeing bottom", "physics": "liquid, drag"},
+        {"type": "sand_dune", "visual": "pile of soft sand", "physics": "shifting, risk of getting stuck"},
+        {"type": "ice_patch", "visual": "glossy white surface", "physics": "extremely slippery, zero friction"},
+        {"type": "rubble", "visual": "pile of broken bricks", "physics": "uneven, sharp edges"},
+
+        # DANGER (> 80)
+        {"type": "big_rock", "visual": "large grey solid object", "physics": "solid, immovable"},
+        {"type": "fire_pit", "visual": "burning wood, smoke", "physics": "hot, dangerous"},
+        {"type": "thick_swamp", "visual": "deep muddy water with vegetation", "physics": "very viscous, high sinking risk"},
+        {"type": "deep_pit", "visual": "dark hole with no visible bottom", "physics": "empty space, fall risk"},
+        {"type": "lava", "visual": "glowing molten rock", "physics": "deadly heat, instant destruction"},
+        {"type": "concrete_wall", "visual": "solid reinforced concrete", "physics": "immovable wall"},
+        {"type": "radioactive_waste", "visual": "glowing green goo", "physics": "toxic, corrosive"},
+        {"type": "spike_trap", "visual": "sharp metal spikes", "physics": "puncture risk"},
+
+        # MYSTERY (Unknowns - Not in KNOWN_SCORES)
+        {"type": "mystery_box", "visual": "floating question mark box", "physics": "unknown"},
+        {"type": "alien_monolith", "visual": "smooth black metal slab", "physics": "humming vibration"},
+        {"type": "glitch_trap", "visual": "flickering pixels", "physics": "distorted reality"},
+        {"type": "magnetic_field", "visual": "distorted air with blue sparks", "physics": "electronic interference"},
+        {"type": "robot_scrap", "visual": "pile of rusted circuits and gears", "physics": "sharp metal debris"},
+        {"type": "oil_slick", "visual": "shimmering oily pool", "physics": "extremely low friction"},
+        {"type": "toxic_gas", "visual": "greenish-yellow haze", "physics": "corrosive atmosphere"},
     ]
+
+    # Pre-defined Knowledge Base (Type -> Score)
+    KNOWN_SCORES = {
+        # Safe
+        "dry_grass": 10, "dirt_path": 5, "asphalt": 0, "gravel": 15, "flowers": 5,
+        # Caution
+        "puddle": 40, "mud_patch": 60, "shallow_water": 50, "sand_dune": 65, "ice_patch": 70, "rubble": 55,
+        # Danger
+        "big_rock": 100, "fire_pit": 100, "thick_swamp": 90, "deep_pit": 100, 
+        "lava": 100, "concrete_wall": 100, "radioactive_waste": 100, "spike_trap": 100 # Walls
+    }
 
     def generate_obstacle_properties(self):
         """Sonradan eklenen engellere rastgele özellik atar."""
-        base_prop = random.choice(self.OBSTACLE_TEMPLATES)
+        
+        # Split templates into Known and Unknown
+        known_templates = [t for t in self.OBSTACLE_TEMPLATES if t["type"] in self.KNOWN_SCORES]
+        unknown_templates = [t for t in self.OBSTACLE_TEMPLATES if t["type"] not in self.KNOWN_SCORES]
+        
+        # 50% Chance for Unknown (Mystery) Object
+        if random.random() < 0.5 and unknown_templates:
+            base_prop = random.choice(unknown_templates)
+        else:
+            base_prop = random.choice(known_templates)
         
         # Create a unique copy
         props = base_prop.copy()
@@ -287,31 +348,47 @@ class PathfindingVisualizer:
         # ID generation
         props["id"] = f"obj_{random.randint(1000, 9999)}"
         
-        # Calculate Color based on Score: Green (0) -> Red (100)
-        # Score is 0-100.
-        # Red increases with score, Green decreases with score.
-        score = props.get("score", 50)
-        red_val = int(255 * (score / 100))
-        green_val = int(255 * (1 - (score / 100)))
+        # Initial color based on predefined score if available (Instant feedback)
+        # If unknown, use a distinct "Mystery" color (Purple)
+        score = self.KNOWN_SCORES.get(props["type"], None)
         
-        # Clamp values
-        red_val = max(0, min(255, red_val))
-        green_val = max(0, min(255, green_val))
-        
-        props["color"] = (red_val, green_val, 0)
+        if score is not None:
+            # Calculate Color based on Score: Green (0) -> Red (100)
+            red_val = int(255 * (score / 100))
+            green_val = int(255 * (1 - (score / 100)))
+            
+            # Clamp values
+            red_val = max(0, min(255, red_val))
+            green_val = max(0, min(255, green_val))
+            props["color"] = (red_val, green_val, 0)
+            props["score"] = score # Assign score immediately if known
+        else:
+            # Unknown Object -> Purple/Magenta
+            props["color"] = (200, 0, 200)
+            # Do NOT assign score yet
         
         return props
 
     def treat_as_wall(self, props):
         """Returns True if the obstacle is considered a wall (score > 80)."""
-        return props.get("score", 0) > 80
+        # First check if we have a resolved score in decision_cache
+        if props["type"] in self.decision_cache:
+            return self.decision_cache[props["type"]] > 80
+            
+        # Fallback for predefined scores (should generally happen via cache or direct lookup)
+        return self.KNOWN_SCORES.get(props["type"], 0) > 80
 
     def send_to_llm(self, props):
         """Send to real Gemini for evaluation using threading."""
         print(f"[LLM] Requesting analysis for {props['id']} ({props['type']})...")
+        self.llm_call_count += 1
+        
+        # Context Injection: Add known examples to guide the model
+        context_examples = {k: v for k, v in list(self.KNOWN_SCORES.items())[:5]} # Pick first 5 as examples
         
         def thread_target():
-            result = self.analyzer.analyze_obstacle(props)
+            # Pass our simplified known list as context
+            result = self.analyzer.analyze_obstacle(props, context_examples) 
             with self.llm_lock:
                 self.llm_results.append((props, result))
 
@@ -325,8 +402,29 @@ class PathfindingVisualizer:
             "props": props
         })
 
+    def resolve_unknown_obstacle(self, x, y, score):
+        """Called when LLM (or cache) decides a score for a previously unknown object."""
+        # Update map based on verdict
+        if score > 80:
+             # It's a wall. Keep it as 1.
+             self.known_map[x][y] = 1
+             print(f"[RESOLVE] {x},{y} -> WALL (Score {score})")
+        else:
+             # It's safe/traversable. Remove wall marker.
+             self.known_map[x][y] = 0
+             print(f"[RESOLVE] {x},{y} -> SAFE/TRAVERSABLE (Score {score})")
+             
+             # Need to trigger pathfinding since a wall just opened up
+             self.recalculate_path()
+
     def check_llm_status(self):
         """Checks the status of LLM threads and adjusts speed."""
+        
+        # 0. PRIORITY: WARMUP
+        if self.is_warming_up:
+            self.speed_modifier = 0.0
+            return
+
         # 1. Process results from threads
         with self.llm_lock:
             while self.llm_results:
@@ -337,26 +435,21 @@ class PathfindingVisualizer:
                     print(f"[LLM] Gemini Verdict for {res_props['id']}: Score {res_score} ({result.get('rationale', '')})")
                     
                     obs_type = res_props.get("type")
+                    used_model = result.get("_meta_model", "unknown")
+                    
                     if obs_type:
                         self.decision_cache[obs_type] = res_score
                         print(f"[CACHE] Saved {obs_type} -> {res_score}")
                     
                     # LOGGING TO FILE
                     try:
-                        # Find the corresponding item in llm_queue to get start_time
-                        # Note: The item might have been removed from llm_queue in step 2 if it finished fast,
-                        # but we need to track it better. 
-                        # Actually, llm_queue is cleaned up in step 2 (below), so it might still be there or we need a better way.
-                        # Ideally, we should pass start_time with the result.
-                        # For now, let's look it up or default to 0.
-                        
                         start_time = time.time() # Default fallback
                         for q_item in self.llm_queue:
                              if q_item['props']['id'] == res_props['id']:
                                  start_time = q_item['start_time']
                                  break
                         
-                        elapsed = time.time() - start_time
+                        elapsed = result.get("_meta_duration", time.time() - start_time)
                         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         
                         # Calculate Average Speed (Steps per Second)
@@ -365,14 +458,16 @@ class PathfindingVisualizer:
                         
                         log_entry = (
                             f"[{timestamp}] "
-                            f"Model: {self.analyzer.model_id} | "
+                            f"Model: {used_model} | "
                             f"Duration: {elapsed:.2f}s | "
+                            f"LLM Calls: {self.llm_call_count} | "
                             f"LLM Score: {res_score} | "
                             f"Steps: {self.steps} | "
                             f"Replans: {self.replans} | "
                             f"Discovered: {self.discovered_obstacles} | "
                             f"Path Len: {len(self.path) if self.path else 0} | "
                             f"Avg Speed: {avg_speed:.2f} steps/s | "
+                            f"Target Speed: {BLOCKS_PER_SECOND} blk/s | "
                             f"Chosen Speed: {self.speed_modifier:.1f}x\n"
                         )
                         
@@ -381,60 +476,39 @@ class PathfindingVisualizer:
                     except Exception as e:
                         print(f"[LOG ERROR] Could not write to log.txt: {e}")
 
+                    # Update all existing instances of this type on the map
                     for pos, p in self.obstacle_props.items():
                         if p.get("type") == obs_type:
                             p["score"] = res_score
-                            # Update Color Dynamically
+                            # Update Color
                             red_val = int(255 * (res_score / 100))
                             green_val = int(255 * (1 - (res_score / 100)))
                             red_val = max(0, min(255, red_val))
                             green_val = max(0, min(255, green_val))
                             p["color"] = (red_val, green_val, 0)
+                            
+                            # Resolve the wall status 
+                            # (If it was waiting as a wall, this will clear it if safe)
+                            px, py = pos
+                            self.resolve_unknown_obstacle(px, py, res_score)
                     
                     self.recalculate_path()
                 else:
                     print(f"[LLM] Failed to get valid result for {res_props['id']}. Retrying later if visible.")
 
         if self.llm_queue:
+            # Active requests pending -> FULL STOP
             current_time = time.time()
             active_items = []
-            max_duration_so_far = 0
             
-            # Check if any "on path" obstacle is being analyzed
-            waiting_for_path_obstacle = False
-
             for item in self.llm_queue:
                 if item["thread"].is_alive():
-                    elapsed = current_time - item["start_time"]
-                    max_duration_so_far = max(max_duration_so_far, elapsed)
                     active_items.append(item)
-                    
-                    # Coordinate extraction using props id logic or direct coordinate storage would be better.
-                    # But here we rely on reverse lookup or just checking if the object ID matches something on our path.
-                    # Since we don't store coords in props directly efficiently for this check, let's reverse look up:
-                    # Actually, better: We know where obstacles are in obstacle_props.
-                    
-                    # Find coordinates for this prop's ID
-                    # This could be slow if map is huge, but fine here.
-                    target_coords = None
-                    for pos, prop in self.obstacle_props.items():
-                         if prop['id'] == item['props']['id']:
-                             target_coords = pos
-                             break
-                    
-                    if target_coords and target_coords in self.path:
-                        waiting_for_path_obstacle = True
-                        print(f"[WAIT] Waiting for on-path obstacle {item['props']['type']} at {target_coords}...")
-
+            
             self.llm_queue = active_items
             
-            # Speed Control Logic
-            if waiting_for_path_obstacle:
-                 self.speed_modifier = 0.0 # Force STOP
-            elif max_duration_so_far > 1.0:
-                self.speed_modifier = 0.0 # STOP
-            elif max_duration_so_far > 0.5:
-                self.speed_modifier = 0.5 # SLOW
+            if self.llm_queue:
+                self.speed_modifier = 0.1 # SLOW CRAWL (0.1x) while thinking
             else:
                 self.speed_modifier = 1.0
         else:
@@ -456,7 +530,9 @@ class PathfindingVisualizer:
                 f"Total Time: {total_time:.2f}s | "
                 f"Total Steps: {self.steps} | "
                 f"Avg Speed: {avg_speed:.2f} steps/s | "
+                f"Target Speed: {BLOCKS_PER_SECOND} blk/s | "
                 f"Replans: {self.replans} | "
+                f"LLM Calls: {self.llm_call_count} | "
                 f"Obstacles Found: {self.discovered_obstacles}\n"
                 f"{'-'*80}\n"
             )
@@ -487,78 +563,95 @@ class PathfindingVisualizer:
                         continue
 
                     # Gerçekte gizli engel var ama biz bilmiyorsak
-                    if self.real_map[x][y] == 2 and self.known_map[x][y] == 0:
+                    if self.real_map[x][y] == 2 and (x, y) not in self.obstacle_props: 
+                         # Note: logic changed slightly to allow re-checking if we don't have props yet
+                         # but usually if we have props we've "discovered" it.
+                        
                         # Eğer bu engel zaten kayıtlı değilse özellik üret
-                        if (x, y) not in self.obstacle_props:
-                            props = self.generate_obstacle_properties()
-                            self.obstacle_props[(x, y)] = props
-                            self.log_encounter(self.car_pos, (x, y), props)
-                        else:
-                            props = self.obstacle_props[(x, y)]
-
-                        # Karar Mekanizması
+                        props = self.generate_obstacle_properties()
+                        self.obstacle_props[(x, y)] = props
+                        self.log_encounter(self.car_pos, (x, y), props)
+                        
                         obs_type = props.get("type")
                         
-                        # 1. Cache Kontrolü
-                        if obs_type in self.decision_cache:
-                            # Only count if we haven't processed this object ID yet
-                            if props.get("id") not in self.processed_cache_ids:
-                                self.cache_hit_count += 1
-                                self.processed_cache_ids.add(props.get("id"))
-                                
-                            # Bilinen tip -> Hemen skoru uygula
-                            cached_score = self.decision_cache[obs_type]
-                            if props.get("score") != cached_score:
-                                props["score"] = cached_score
-                                # Color update happens in draw loop or we can do it here too, but mostly visual.
-                                
-                            # LOGGING DECISION
-                            if cached_score > 80:
-                                print(f"[DECISION] {obs_type} (Score {cached_score}) -> IMPASSABLE. Treating as WALL. Rerouting.")
-                                self.known_map[x][y] = 1
-                                self.discovered_obstacles += 1
-                                if (x, y) in self.path:
-                                    replan_needed = True
-                            else:
-                                cost_increase = 1 + (cached_score / 10)
-                                # Düşük skorsa sadece reroute gerekebilir (maliyet değişti)
-                                if (x, y) in self.path:
-                                    print(f"[DECISION] {obs_type} (Score {cached_score}) -> TRAVERSABLE (Cost {cost_increase:.1f}). Checking if shorter path exists...")
-                                    replan_needed = True
-
-                        # 2. Eğer Cache'de yoksa ve Skor yüksekse (Duvar)
-                        elif self.treat_as_wall(props):
-                             # Yüksek skor -> Kesin Engel
-                            print(f"[DECISION] Unknown High-Score Object (Score {props.get('score')}) -> IMPASSABLE. Treating as WALL.")
-                            self.known_map[x][y] = 1 
-                            self.discovered_obstacles += 1
-                            if (x, y) in self.path:
-                                replan_needed = True
+                        # --- DECISION LOGIC ---
                         
-                        # 3. Eğer Cache'de yoksa ve Skor düşükse -> LLM'e Sor
+                        # 1. Check Pre-defined Knowledge Base (INSTANT)
+                        if obs_type in self.KNOWN_SCORES:
+                            score = self.KNOWN_SCORES[obs_type]
+                            props["score"] = score
+                            self.decision_cache[obs_type] = score # Cache it
+                            
+                            # Update map directly
+                            if score > 80: # WALL
+                                self.known_map[x][y] = 1
+                                print(f"[INSTANT] Known Danger: {obs_type} -> WALL")
+                                replan_needed = True
+                            else: # SAFE / CAUTION
+                                # Traversable. map[x][y] stays 0 (or whatever it was).
+                                # Cost will be calculated in A*
+                                pass 
+                                
+                        # 2. Check Decision Cache (Previously LLM analyzed)
+                        elif obs_type in self.decision_cache:
+                            self.cache_hit_count += 1 # Increment hit counter
+                            score = self.decision_cache[obs_type]
+                            props["score"] = score
+                            
+                            if score > 80:
+                                self.known_map[x][y] = 1
+                                replan_needed = True
+                                
+                        # 3. UNKNOWN -> SAFETY FIRST
                         else:
-                            is_evaluating = any(item['props']['id'] == props['id'] for item in self.llm_queue)
-                            if not is_evaluating:
-                                print(f"[DECISION] Unknown Object {props.get('type')} -> Sending to LLM for analysis...")
-                                self.send_to_llm(props)
+                            # CRITICAL: Mark as WALL temporarily to prevent overlapping
+                            self.known_map[x][y] = 1 
+                            # print(f"[UNKNOWN] Mystery Object: {obs_type} -> Analyizing... (Marked as temp WALL)")
+                            
+                            # Send to LLM (Prevent duplicate requests for same TYPE and same ID)
+                            # Check if we are already evaluating this TYPE or this specific ID
+                            is_evaluating_id = any(item['props']['id'] == props['id'] for item in self.llm_queue)
+                            is_evaluating_type = any(item['props']['type'] == obs_type for item in self.llm_queue)
+                            
+                            if not is_evaluating_id and not is_evaluating_type:
+                                # QUEUE LIMIT CHECK: only send if fleet has capacity
+                                if not self.analyzer.is_at_capacity(2):
+                                    self.send_to_llm(props)
+                                    replan_needed = True # Because we just put a wall in front of us
+                                else:
+                                    print(f"[QUEUE FULL] Skipping LLM request for {obs_type} (Fleet Saturated)")
+                        
+                        self.discovered_obstacles += 1
                         
         if replan_needed:
-            print("[ACTION] Path blocked or costs changed. Recalculating best path...")
+            # print("[ACTION] Map updated. Recalculating path...")
             self.recalculate_path()
 
-    def move_car(self):
+    def move_car(self, dt):
         # Hız kontrolü
         self.check_llm_status()
         
         if self.speed_modifier == 0.0:
+            self.move_accumulator = 0.0
             return # Stop
             
-        # Eğer yarı hızdaysa, basitçe her 2 frame'de bir hareket etmesini sağlayabiliriz
-        # Veya şans faktörü koyarız
-        if self.speed_modifier == 0.5:
-             if random.random() < 0.5:
-                 return # Skip this move frame
+        # Accumulate time
+        self.move_accumulator += dt
+        
+        # Calculate delay per step based on blocks per second
+        # If BLOCKS_PER_SECOND = 15, delay = 1/15 = 0.066s
+        current_speed = BLOCKS_PER_SECOND * self.speed_modifier
+        if current_speed <= 0:
+            return
+            
+        step_delay = 1.0 / current_speed
+        
+        # Execute steps
+        while self.move_accumulator >= step_delay:
+            self.move_accumulator -= step_delay
+            self.execute_step()
 
+    def execute_step(self):
         if self.path and len(self.path) > 1:
             next_step = self.path[1]
             nx, ny = next_step
@@ -597,6 +690,11 @@ class PathfindingVisualizer:
 
     def draw_hud(self):
         path_len = len(self.path) if self.path else 0
+        
+        status_text = f"Speed Mod: {self.speed_modifier:.1f}x"
+        if self.is_warming_up:
+            status_text += " (WARMING UP... WAIT)"
+            
         lines = [
             f"[SPACE] Pause: {self.paused}",
             f"Algorithm: Weighted A*",
@@ -605,15 +703,27 @@ class PathfindingVisualizer:
             f"Replans: {self.replans}",
             f"Discovered: {self.discovered_obstacles}",
             f"Path Len: {path_len}",
-            f"Speed Mod: {self.speed_modifier:.1f}x",
+            status_text,
             f"LLM Queue: {len(self.llm_queue)}",
             f"Cache Hits: {self.cache_hit_count}",
         ]
+        
+        # Add Cluster Stats
         y = 6
         for line in lines:
             surf = self.font.render(line, True, COLOR_TEXT)
             self.screen.blit(surf, (6, y))
             y += 18
+            
+        # Draw Cluster Info at bottom left
+        y_stats = WINDOW_HEIGHT - 60
+        for m in self.analyzer.models:
+             q = self.analyzer.queue_depths.get(m, 0)
+             t = self.analyzer.avg_times.get(m, 0)
+             stat_line = f"[{m}] Q:{q} | Avg:{t:.2f}s"
+             surf = self.font.render(stat_line, True, (150, 150, 150))
+             self.screen.blit(surf, (6, y_stats))
+             y_stats += 15
 
     def draw(self):
         self.screen.fill(COLOR_BG)
@@ -686,11 +796,9 @@ class PathfindingVisualizer:
             grid_x, grid_y = mx // CELL_SIZE, my // CELL_SIZE
             if 0 <= grid_x < MAP_WIDTH and 0 <= grid_y < MAP_HEIGHT:
                 # Gerçek dünyaya sabit duvar ekliyoruz (1)
+                # ROBOT BUNU BİLMİYOR! (self.known_map güncellenmiyor)
+                # Sensör görüşüne girince fark edecek.
                 self.real_map[grid_x][grid_y] = 1
-                self.known_map[grid_x][grid_y] = 1
-
-                if (grid_x, grid_y) in self.path:
-                    self.recalculate_path()
 
     def run(self):
         while self.running:
@@ -708,7 +816,9 @@ class PathfindingVisualizer:
 
             if not self.paused:
                 self.check_sensors()
-                self.move_car()
+                # Pass delta time in seconds
+                dt = self.clock.get_time() / 1000.0
+                self.move_car(dt)
 
             self.draw()
             self.clock.tick(FPS)
