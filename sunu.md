@@ -99,4 +99,6 @@ qwen2.5:1.5b
 
 or maybe qwen3 0.6b is just too slow and ministral can easly handle the load so we decided to just use ministral-3:3b and qwen2.5:1.5b 
 
+I have made a priority queue for this. We have 3 models and we are using them at the same time. If distance too much that goes to cluster B where it only has 1 model and if things are close goes to cluster A where it has 2 models. If a obstacles comes too close to robot than it will transfer to cluster A. 
+
 We need to edit logs for this too and HUD

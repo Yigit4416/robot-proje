@@ -54,6 +54,13 @@ class OllamaAnalyzer:
             # 2. All busy, pick lowest queue
             return min(self.models, key=lambda m: (self.queue_depths[m], self.avg_times[m]))
 
+    def analyze_distant_obstacle(self, obstacle_props, context_examples=None):
+        """
+        Specialized routing for 'distant' objects (Cluster B).
+        Forces usage of qwen2.5:1.5b as requested.
+        """
+        return self.analyze_obstacle(obstacle_props, context_examples, forced_model="qwen2.5:1.5b")
+
     def analyze_obstacle(self, obstacle_props, context_examples=None, forced_model=None):
         """Send obstacle to Ollama via Load Balancer."""
         

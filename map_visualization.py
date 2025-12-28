@@ -378,7 +378,7 @@ class PathfindingVisualizer:
         # Fallback for predefined scores (should generally happen via cache or direct lookup)
         return self.KNOWN_SCORES.get(props["type"], 0) > 80
 
-    def send_to_llm(self, props):
+    def send_to_llm(self, props, pos, distant_mode=False):
         """Send to real Gemini for evaluation using threading."""
         print(f"[LLM] Requesting analysis for {props['id']} ({props['type']})...")
         self.llm_call_count += 1
@@ -388,9 +388,13 @@ class PathfindingVisualizer:
         
         def thread_target():
             # Pass our simplified known list as context
-            result = self.analyzer.analyze_obstacle(props, context_examples) 
+            if distant_mode:
+                result = self.analyzer.analyze_distant_obstacle(props, context_examples)
+            else:
+                result = self.analyzer.analyze_obstacle(props, context_examples)
+                
             with self.llm_lock:
-                self.llm_results.append((props, result))
+                self.llm_results.append((props, result, distant_mode))
 
         thread = threading.Thread(target=thread_target)
         thread.daemon = True
@@ -399,7 +403,9 @@ class PathfindingVisualizer:
         self.llm_queue.append({
             "start_time": time.time(),
             "thread": thread,
-            "props": props
+            "props": props,
+            "pos": pos,
+            "distant_mode": distant_mode
         })
 
     def resolve_unknown_obstacle(self, x, y, score):
@@ -417,6 +423,37 @@ class PathfindingVisualizer:
              # Need to trigger pathfinding since a wall just opened up
              self.recalculate_path()
 
+    def check_priority_upgrades(self):
+        """
+        Scans the LLM queue for 'Distant' tasks (Cluster B) that have become 'Close' (< 2 blocks).
+        If found, they are removed from the Distant flow and re-submitted to Cluster A (Priority).
+        """
+        upgraded_indices = []
+        
+        for i, item in enumerate(self.llm_queue):
+            if not item["distant_mode"]:
+                continue # Already priority
+                
+            # Check current distance
+            ox, oy = item["pos"]
+            cx, cy = self.car_pos
+            dist = abs(ox - cx) + abs(oy - cy)
+            
+            if dist < 2:
+                # UPGRADE NEEDED
+                print(f"[PRIORITY UPGRADE] Object {item['props']['id']} at ({ox},{oy}) came into Close Range (Dist {dist})!")
+                upgraded_indices.append(i)
+        
+        # Process upgrades (iterate backwards to avoid index shifting)
+        for i in sorted(upgraded_indices, reverse=True):
+            item = self.llm_queue.pop(i)
+            # Re-submit to Cluster A
+            # Note: The old thread continues in background but its result will likely handle itself 
+            # (or we could add a cancelled flag, but for now ignoring it is fine as 'send_to_llm' creates a new entry)
+            # Actually, duplicate results might update the cache twice, which is harmless.
+            self.send_to_llm(item["props"], item["pos"], distant_mode=False)
+
+
     def check_llm_status(self):
         """Checks the status of LLM threads and adjusts speed."""
         
@@ -424,18 +461,25 @@ class PathfindingVisualizer:
         if self.is_warming_up:
             self.speed_modifier = 0.0
             return
+            
+        # Priority Upgrade Check
+        self.check_priority_upgrades()
 
         # 1. Process results from threads
         with self.llm_lock:
             while self.llm_results:
-                res_props, result = self.llm_results.pop(0)
+                # UNPACK with distant_mode
+                res_props, result, was_distant = self.llm_results.pop(0)
                 
                 if result and "score" in result:
                     res_score = result["score"]
-                    print(f"[LLM] Gemini Verdict for {res_props['id']}: Score {res_score} ({result.get('rationale', '')})")
+                    used_model = result.get("_meta_model", "unknown")
+                    cluster_name = "Cluster B" if was_distant else "Cluster A"
+                    
+                    # Requested Format: rule "cluster <one we are using> -- <model>"
+                    print(f"{cluster_name} -- {used_model} | Verdict for {res_props['id']}: Score {res_score}")
                     
                     obs_type = res_props.get("type")
-                    used_model = result.get("_meta_model", "unknown")
                     
                     if obs_type:
                         self.decision_cache[obs_type] = res_score
@@ -497,18 +541,28 @@ class PathfindingVisualizer:
                     print(f"[LLM] Failed to get valid result for {res_props['id']}. Retrying later if visible.")
 
         if self.llm_queue:
-            # Active requests pending -> FULL STOP
+            # Active requests pending
             current_time = time.time()
             active_items = []
+            
+            # --- SPEED LOGIC ---
+            # Default to Full Speed
+            should_slow_down = False
             
             for item in self.llm_queue:
                 if item["thread"].is_alive():
                     active_items.append(item)
+                    # If ANY item uses 'Close' mode (distant_mode=False), we MUST slow down.
+                    if not item["distant_mode"]:
+                        should_slow_down = True
             
             self.llm_queue = active_items
             
             if self.llm_queue:
-                self.speed_modifier = 0.1 # SLOW CRAWL (0.1x) while thinking
+                if should_slow_down:
+                     self.speed_modifier = 0.1 # SLOW CRAWL (0.1x) for Priority items
+                else:
+                     self.speed_modifier = 1.0 # FULL SPEED if only Distant items are in queue
             else:
                 self.speed_modifier = 1.0
         else:
@@ -616,7 +670,27 @@ class PathfindingVisualizer:
                             if not is_evaluating_id and not is_evaluating_type:
                                 # QUEUE LIMIT CHECK: only send if fleet has capacity
                                 if not self.analyzer.is_at_capacity(2):
-                                    self.send_to_llm(props)
+                                    
+                                    # --- DISTANCE LOGIC TO SPLIT CLUSTERS ---
+                                    # Check distance from obstacle (x, y) to the closest point on the current path
+                                    min_dist_to_path = float('inf')
+                                    if self.path:
+                                        for px, py in self.path:
+                                            dist = abs(px - x) + abs(py - y)
+                                            if dist < min_dist_to_path:
+                                                min_dist_to_path = dist
+                                    else:
+                                        # If no path (e.g. at start), treat as "close" or "far" based on car
+                                        min_dist_to_path = abs(self.car_pos[0] - x) + abs(self.car_pos[1] - y)
+
+                                    # User Rule: At least 2 blocks away from our road (path) -> Distant Cluster
+                                    if min_dist_to_path >= 2:
+                                        print(f"[CLUSTER B] Routing {obs_type} (Dist: {min_dist_to_path}) to Distant Cluster (Qwen2.5)")
+                                        self.send_to_llm(props, pos=(x,y), distant_mode=True)
+                                    else:
+                                        print(f"[CLUSTER A] Routing {obs_type} (Dist: {min_dist_to_path}) to Standard Cluster (Load Balanced)")
+                                        self.send_to_llm(props, pos=(x,y), distant_mode=False)
+
                                     replan_needed = True # Because we just put a wall in front of us
                                 else:
                                     print(f"[QUEUE FULL] Skipping LLM request for {obs_type} (Fleet Saturated)")
