@@ -8,6 +8,7 @@ SCORING RULES:
 
 INPUT: JSON { "type", "visual", "physics" }
 OUTPUT: Valid JSON ONLY. No markdown.
+STRICT RULE: "score" MUST be a single INTEGER. NO RANGES (e.g. "80-90" is FORBIDDEN).
 {
   "score": <int 0-100>,
   "rationale": "<short explanation>",

@@ -8,7 +8,8 @@ class OllamaAnalyzer:
         # Multi-Model Fleet
         self.models = [
             "ministral-3:3b", # Correct tag based on `ollama list` output
-            "qwen2.5:1.5b"
+            "qwen2.5:1.5b",
+            "deepseek-r1:1.5b"
         ]
         
         # Load Balance State
@@ -33,7 +34,7 @@ class OllamaAnalyzer:
         with self.lock:
             # If ANY model is below limit, we are not at capacity
             # (Because select_best_model will pick that one)
-            for m in self.models:
+            for m in self.models[:2]: # Only check Cluster A models
                 if self.queue_depths[m] < limit:
                     return False
             return True
@@ -44,22 +45,23 @@ class OllamaAnalyzer:
         1. Priority: Free models (Queue=0) -> Pick fastest avg_time.
         2. Fallback: Lowest Queue -> Tie-break fastest avg_time.
         """
+        cluster_a = self.models[:2] # Restricted to first 2 models
         with self.lock:
             # 1. Look for free models
-            free_models = [m for m in self.models if self.queue_depths[m] == 0]
+            free_models = [m for m in cluster_a if self.queue_depths[m] == 0]
             if free_models:
                 # Pick the one with lowest average response time
                 return min(free_models, key=lambda m: self.avg_times[m])
             
             # 2. All busy, pick lowest queue
-            return min(self.models, key=lambda m: (self.queue_depths[m], self.avg_times[m]))
+            return min(cluster_a, key=lambda m: (self.queue_depths[m], self.avg_times[m]))
 
     def analyze_distant_obstacle(self, obstacle_props, context_examples=None):
         """
         Specialized routing for 'distant' objects (Cluster B).
-        Forces usage of qwen2.5:1.5b as requested.
+        Forces usage of deepseek-r1:1.5b as requested.
         """
-        return self.analyze_obstacle(obstacle_props, context_examples, forced_model="qwen2.5:1.5b")
+        return self.analyze_obstacle(obstacle_props, context_examples, forced_model="deepseek-r1:1.5b")
 
     def analyze_obstacle(self, obstacle_props, context_examples=None, forced_model=None):
         """Send obstacle to Ollama via Load Balancer."""
@@ -121,9 +123,35 @@ class OllamaAnalyzer:
                 import re
                 match = re.search(r'\{.*\}', content, re.DOTALL)
                 if match:
-                    result = json.loads(match.group(0))
+                    try:
+                        result = json.loads(match.group(0))
+                    except:
+                        result = {"score": 50, "rationale": "JSON Parse Failed", "label": "Unknown"}
                 else:
                     result = {"score": 50, "rationale": "Raw Parse Failed", "label": "Unknown"}
+
+            # SANITIZE SCORE: Ensure it is an integer
+            if "score" in result:
+                val = result["score"]
+                if isinstance(val, str):
+                    # Handle ranges like "81-100" -> take max to be safe/conservative
+                    import re
+                    # Find all numbers
+                    nums = re.findall(r'\d+', val)
+                    if nums:
+                        # Take the average or max? 
+                        # Safety-critical: Max is safer (treat as wall if unsure)
+                        # But average is more representative. 
+                        # Let's take the first number found to keep it simple, or max.
+                        # "81-100" -> 100 (Wall). "10-20" -> 20.
+                        ints = [int(n) for n in nums]
+                        result["score"] = max(ints)
+                    else:
+                        result["score"] = 50 # Default if no numbers found
+                elif isinstance(val, (int, float)):
+                    result["score"] = int(val)
+                else:
+                    result["score"] = 50
 
             duration = time.time() - start_t
             

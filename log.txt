@@ -109,3 +109,14 @@
 [2025-12-28 14:32:06] Model: ministral-3:3b | Duration: 15.75s | LLM Calls: 7 | LLM Score: 85 | Steps: 51 | Replans: 25 | Discovered: 42 | Path Len: 124 | Avg Speed: 0.94 steps/s | Target Speed: 5.0 blk/s | Chosen Speed: 0.1x
 [2025-12-28 14:32:32] MISSION COMPLETED | Total Time: 81.28s | Total Steps: 188 | Avg Speed: 2.31 steps/s | Target Speed: 5.0 blk/s | Replans: 53 | LLM Calls: 7 | Obstacles Found: 120
 --------------------------------------------------------------------------------
+[2025-12-28 14:56:33] Model: deepseek-r1:1.5b | Duration: 8.92s | LLM Calls: 4 | LLM Score: 61 | Steps: 12 | Replans: 5 | Discovered: 10 | Path Len: 163 | Avg Speed: 0.30 steps/s | Target Speed: 5.0 blk/s | Chosen Speed: 0.1x
+[2025-12-28 14:56:42] Model: deepseek-r1:1.5b | Duration: 11.68s | LLM Calls: 4 | LLM Score: 81-100 | Steps: 16 | Replans: 9 | Discovered: 12 | Path Len: 159 | Avg Speed: 0.32 steps/s | Target Speed: 5.0 blk/s | Chosen Speed: 0.1x
+[2025-12-28 14:59:28] Model: deepseek-r1:1.5b | Duration: 15.88s | LLM Calls: 5 | LLM Score: 61 | Steps: 15 | Replans: 6 | Discovered: 14 | Path Len: 160 | Avg Speed: 0.33 steps/s | Target Speed: 5.0 blk/s | Chosen Speed: 0.1x
+[2025-12-28 14:59:34] Model: deepseek-r1:1.5b | Duration: 21.12s | LLM Calls: 5 | LLM Score: 81 | Steps: 18 | Replans: 10 | Discovered: 17 | Path Len: 157 | Avg Speed: 0.35 steps/s | Target Speed: 5.0 blk/s | Chosen Speed: 0.1x
+[2025-12-28 14:59:36] Model: deepseek-r1:1.5b | Duration: 16.83s | LLM Calls: 5 | LLM Score: 0 | Steps: 19 | Replans: 11 | Discovered: 18 | Path Len: 156 | Avg Speed: 0.36 steps/s | Target Speed: 5.0 blk/s | Chosen Speed: 0.1x
+[2025-12-28 14:59:42] Model: qwen2.5:1.5b | Duration: 28.43s | LLM Calls: 5 | LLM Score: 80 | Steps: 22 | Replans: 13 | Discovered: 19 | Path Len: 153 | Avg Speed: 0.37 steps/s | Target Speed: 5.0 blk/s | Chosen Speed: 0.1x
+[2025-12-28 14:59:50] Model: ministral-3:3b | Duration: 21.85s | LLM Calls: 7 | LLM Score: 100 | Steps: 26 | Replans: 18 | Discovered: 25 | Path Len: 149 | Avg Speed: 0.39 steps/s | Target Speed: 5.0 blk/s | Chosen Speed: 0.1x
+[2025-12-28 15:00:06] Model: deepseek-r1:1.5b | Duration: 22.47s | LLM Calls: 7 | LLM Score: 20 | Steps: 107 | Replans: 31 | Discovered: 74 | Path Len: 70 | Avg Speed: 1.29 steps/s | Target Speed: 5.0 blk/s | Chosen Speed: 1.0x
+[2025-12-28 15:00:08] Model: deepseek-r1:1.5b | Duration: 20.70s | LLM Calls: 7 | LLM Score: 81 | Steps: 118 | Replans: 38 | Discovered: 86 | Path Len: 61 | Avg Speed: 1.39 steps/s | Target Speed: 5.0 blk/s | Chosen Speed: 1.0x
+[2025-12-28 15:00:20] MISSION COMPLETED | Total Time: 97.19s | Total Steps: 180 | Avg Speed: 1.85 steps/s | Target Speed: 5.0 blk/s | Replans: 54 | LLM Calls: 7 | Obstacles Found: 119
+--------------------------------------------------------------------------------
