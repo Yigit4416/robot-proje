@@ -1,104 +1,90 @@
 # Bilinmeyen Ortamda Otonom Robot Navigasyonu ve A* Algoritması Sunumu
 
 ## Slayt 1: Kapak
-**Başlık:** Bilinmeyen Ortamda Otonom Robot Navigasyonu ve Gelişmiş A* Simülasyonu  
-**Ders:** Robot Tasarımı ve Uygulamaları  
-**Hazırlayanlar:** [Grup Üyelerinin İsimleri]  
+**Başlık:** Bilinmeyen Ortamda Otonom Robot Navigasyonu ve Dual-Cluster LLM Mimarisi
+**Ders:** Robot Tasarımı ve Uygulamaları
+**Hazırlayanlar:** [Grup Üyelerinin İsimleri]
 **Tarih:** 2024-2025 Güz Dönemi
 
 ---
 
-## Slayt 2: Konunun Tanımı ve Kapsamı
+## Slayt 2: Projenin Amacı ve Kapsamı
+**Amaç:** Başlangıçta haritası bilinmeyen dinamik bir ortamda, otonom bir robotun sensör verilerini ve Yapay Zeka (LLM) yeteneklerini kullanarak engelleri semantik olarak analiz etmesi ve hedefe giden en optimize yolu (A*) bulmasıdır.
 
-### Konu Nedir?
-Projemizin ana konusu, **"Bilinmeyen Dinamik Ortamlarda Otonom Gezinme (Autonomous Navigation in Unknown Dynamic Environments)"** problemlerinin simülasyon ortamında incelenmesidir. Otonom bir ajanın (robot), başlangıçta haritasını bilmediği bir ızgara (grid) dünyasında, sensör verilerini kullanarak engelleri keşfetmesi ve hedefe giden en kısa yolu dinamik olarak bulmasını konu alır.
+**Kapsam:**
+1. **Keşif (Exploration):** Robotun bilinmeyen bir grid haritasında ilerlemesi.
+2. **Semantik Analiz:** Engellerin sadece fiziksel varlığını değil, özelliklerini (çamur, su, ateş vb.) anlamlandırma.
+3. **Akıllı Karar Verme:** Hangi engelin üzerinden geçilebileceğine (risk skoru) LLM'lerin karar vermesi.
 
-Projemizin ana konusu genel ızgara olarak elimizde bulunan haritayı kullanarak robotun sensör menzilinde ve görüş hattı içindeki engelleri keşfetmesi ve hedefe giden en kısa yolu bulmasıdır. başlangıçta hedefe giden yolu bulabilmesi için A* algoritmasını kullanmaktayız. Araç bilinmeyen engellerle karşılaştığı zaman engelin özelliklerini (aşağıda örnek bulunmakta) LLM'e gönderilmektedir. LLM verilen karara göre araç yönü belirlemektedir.
+---
 
-```json
-{
-    "type": "puddle",
-    "visual": "reflective liquid surface, looks shallow",
-    "physics": "liquid, low friction",
-    "score": 40
-}
+## Slayt 3: Gelişmiş Hibrit Mimari (Hybrid Architecture)
+Projemiz, klasik algoritmaları modern üretken yapay zeka ile birleştirir:
+
+- **Navigasyon Motoru:** **Weighted A*** (Ağırlıklı A-Star) algoritması. Riskli yollardan kaçınır ama imkansız değilse (örn: biraz çamurlu yol) ve yol çok kısaysa orayı tercih edebilir.
+- **Karar Mekanizması (Brain):** Yerel olarak çalışan Çoklu-Model (Multi-Model) LLM filosu.
+
+---
+
+## Slayt 4: Çift Kümeli Yapay Zeka Sistemi (Dual-Cluster AI)
+Performans ve güvenliği dengelemek için **iki farklı işlem kümesi** tasarlanmıştır:
+
+### A. Cluster A (Öncelikli Küme / Priority)
+* **Senaryo:** Robotun **yakın çevresindeki (< 2 blok)** engeller.
+* **Davranış:** Kritik karar anı olduğu için robot **YAVAŞLAR (0.1x)**. Güvenlik önceliklidir.
+* **Modeller:** `ministral-3:3b` ve `qwen2.5:1.5b`.
+* **Teknoloji:** Yük dengeleyici (Load Balancer) en boş ve hızlı modeli seçer.
+
+### B. Cluster B (Uzak Mesafe Kümesi / Background)
+* **Senaryo:** Robotun **görüş menzilindeki uzak (>= 2 blok)** engeller.
+* **Davranış:** Robot karar beklerken **TAM HIZDA (1.0x)** ilerlemeye devam eder.
+* **Model:** `deepseek-r1:1.5b`.
+* **Amaç:** İleri seviye mantık yürütme (Reasoning) ile gelecekteki rotayı önceden planlamak.
+
+---
+
+## Slayt 5: Dinamik Öncelik Yönetimi (Priority Upgrade)
+Gerçek zamanlı bir sistemde koşullar değişebilir.
+
+* **Durum:** Robot, Cluster B tarafından analiz edilmekte olan "uzaktaki" bir engele hızla yaklaşırsa ne olur?
+* **Çözüm:** Sistem mesafeyi her karede (frame) kontrol eder. Eğer engel **2 bloktan daha yakına** girerse:
+  1. Cluster B işlemi (Deepseek) arka planda iptal edilir/göz ardı edilir.
+  2. Engel acil koduyla **Cluster A** kuyruğuna (Ministral/Qwen) taşınır.
+  3. Robot otomatik olarak **Fren Yapar (0.1x hıza düşer)**.
+
+---
+
+## Slayt 6: Performans İyileştirmeleri
+Simülasyonun akıcı çalışması için ek optimizasyonlar yapılmıştır:
+
+1. **Karar Önbellekleme (Decision Caching):**
+   - Robot "Ateş Çukuru"nun tehlikeli olduğunu bir kez öğrendikten sonra (Skor: 100), bir sonraki ateş çukurunda LLM'e sormaz. Hafızadan anında yanıt döner.
+   
+2. **Akıllı Yük Dengeleme (Load Balancing):**
+   - Cluster A'daki modellerin kuyruk uzunlukları ve ortalama yanıt süreleri takip edilir. İşler en uygun modele yönlendirilir.
+
+3. **Özelleşmiş Modeller:**
+   - Hız gereken yerde `ministral`.
+   - Derin mantık gereken yerde `deepseek-r1`.
+
+---
+
+## Slayt 7: Sistem Görselleştirmesi
+*(Buraya system_design.md içerisindeki Mermaid diyagramı veya ekran görüntüsü eklenebilir)*
+
+```mermaid
+graph TD
+    A[Sensör Algılama] -->|Mesafe < 2| B(Cluster A: Yakın)
+    A -->|Mesafe >= 2| C(Cluster B: Uzak)
+    
+    B --> D{Yük Dengeleyici}
+    D -->|Hızlı| E[Ministral-3b]
+    D -->|Alternatif| F[Qwen2.5-1.5b]
+    
+    C --> G[Deepseek-r1:1.5b]
+    
+    C -.->|Robot Yaklaşırsa!| B
+    
+    E & F & G --> H[Risk Skoru]
+    H --> I[A* Rota Planlama]
 ```
-
-### Kapsam Nasıl Tanımlanıyor?
-Bu çalışma şu temel bileşenleri kapsar:
-1.  **Algoritma:** **A* (A-Star)** algoritması kullanılarak robotun şartları bilinmeyen bir ortam içerisinde hedefe giden en kısa yolu bulması amaçlanmaktadır.
-2.  **Algılama (Perception):** Robotun çevresini tanıması için **Görüş Hattı (Line of Sight)** ve **Menzil (Range)** kısıtlamalı sensör modellemesi oluşturduk.
-3.  **Dinamik Rota Planlama:** Yeni bir engel keşfedildiğinde rotanın anlık olarak yeniden hesaplanması.
-4.  **İnsan-Robot Etkileşimi:** Kullanıcı simülasyon esnasında haritaya müdahale (duvar ekleme) edebilmektedir ve robot bu müdahaleye tepki görebilmektedir.
-
----
-
-## Slayt 3: Literatür Taraması ve Benzer Çalışmalar
-
-Bu alandaki çalışmalar literatürde üç ana kategoride yoğunlaşmaktadır:
-
-### 1. Klasik Yol Planlama (Global Planning)
-Haritanın tamamen bilindiği senaryolar.
-*   **Dijkstra Algoritması:** Kesin çözüm sunar ancak büyük haritalarda yavaştır.
-*   **A* Algoritması (Hart et al., 1968):** Heuristic fonksiyonu ile aramayı yönlendirerek işlem yükünü azaltır. Projemizin temelini oluşturur.
-
-### 2. Bilinmeyen Ortamlarda Keşif (Exploration & Navigation) (bunu halen planlıyoruz)
-Haritanın baştan bilinmediği senaryolarda kullanılan yöntemler:
-*   **D* / D* Lite (Koenig & Likhachev):** Değişen çevre koşullarında tüm yolu baştan hesaplamak yerine sadece değişen kısımları güncelleyen (Incremental Search) yöntemlerdir. Tüm haritanın sıfırdan hesaplamanın pahalı bir yöntem olmasından kaynaklı, bunun yerine daha az işlem gücünü kullanabileceğimiz bir yöntemdir.
-*  **Cacheleme:** Aracın daha öncesinde karşılaştığı durumları cache içerisinde tutarak aynı durumla tekrar karşılaşması halinde LLM ile tekrar zaman kaybetmek yerine cache içerisindeki durumu kullanarak daha hızlı bir şekilde ilerleryebilir.
-
----
-
-## Slayt 4: Önerilen Çalışmanın Katkıları
-
-1. Hibrit Karar Verme Mimarisi (Hybrid Decision Making):
-- **Mevcut Durum:** Geleneksel yaklaşımlar (A*, Dijkstra) engelleri sadece "geçilebilir" veya "duvar" olarak görür.
-- **Katkı:** Robot, bir engelle karşılaştığında sensör verilerini (görsel, fiziksel) analiz eder ve LLM'e danışır. Eğer LLM beklenenden uzun sürede cevap verirse (>0.5s), sistem hızı kademeli olarak düşürür veya durur.
-
-2. Semantik Engel Analizi (Semantic Obstacle Analysis):
-- **Akış:** 
-  1. Mesafe sensörü engeli fark eder.
-  2. Robot engelin özniteliklerini (kayganlık, doku, renk) belirler.
-  3. LLM, bu özniteliklere göre bir Risk Skoru (0-100) atar.
-- **Dinamik Maliyet:** Risk skoru, A* algoritmasındaki hücre maliyetine (Weighted A*) dönüştürülür. Detour maliyeti riskten azsa robot başka yola sapar.
-
-3. Karar Önbellekleme (Decision Caching):
-- **Problem:** LLM sorguları zaman alıcıdır ve simülasyonun akışını bozabilir.
-- **Çözüm:** Robot, analiz ettiği her engel tipini (örn: "çamur" -> Skor 60) hafızasına kaydeder. Aynı tip engelle tekrar karşılaştığında LLM'e sormadan saniyeler içinde karar verir. Bu, otonom sistemlerde gerçek zamanlı performansı maksimize eder.
-
----
-
-## Slayt 5: Kaynakça (Örnek Liste - Tamamlanmalı)
-
-Raporunuzda kullanabileceğiniz temel kaynak kategorileri şunlardır (Toplam 20 adet olacak şekilde detaylandırılmalıdır):
-
-1.  Hart, P. E., Nilsson, N. J., & Raphael, B. (1968). "A Formal Basis for the Heuristic Determination of Minimum Cost Paths". *IEEE Transactions on Systems Science and Cybernetics*.
-2.  Koenig, S., & Likhachev, M. (2002). "D* Lite". *AAAI*.
-3.  Thrun, S., Burgard, W., & Fox, D. (2005). *Probabilistic Robotics*. MIT Press.
-4.  Borenstein, J., & Koren, Y. (1991). "The vector field histogram-fast obstacle avoidance for mobile robots".
-5.  Fox, D., Burgard, W., & Thrun, S. (1997). "The dynamic window approach to collision avoidance".
-6.  *Kalan 15 kaynak için: A* optimizasyonları, Grid-based mapping teknikleri ve Robotik ders kitaplarından ilgili bölümler eklenebilir.*
-
-
-![alt text](image-1.png)
-
---
-What we have seen:
-We have tried sameller models like qwen3 0.5B but what we have seen is that smaller model down't mean faster response. because when we use qwen2 1.5B it takes a lot less time to answer than qwen3 0.5B. 
-So the tool calling of the model is way more important than we realised that is why we have decided that we need to go with a better tool calling model.
-
-In many cases LLM answer can take too much time because of that we needed to take counter mesures.
-First of all we are working 3 different models at the same time and we made a simple load balancer for this. This load balancer firtst looks for the queue size of each model. If the queue size is same than it will look for he time of each model. If the time is same than it will look for queues last elements time to wait we we will use lesser time model.
-
-And also if an element from a other queue comes again we are just going to ignore it.
-
-Models we are going to use are:
-ministral-3:3b
-qwen3:0.6b
-qwen2.5:1.5b
-
-or maybe qwen3 0.6b is just too slow and ministral can easly handle the load so we decided to just use ministral-3:3b and qwen2.5:1.5b 
-
-I have made a priority queue for this. We have 3 models and we are using them at the same time. If distance too much that goes to cluster B where it only has 1 model and if things are close goes to cluster A where it has 2 models. If a obstacles comes too close to robot than it will transfer to cluster A. 
-
-We need to edit logs for this too and HUD

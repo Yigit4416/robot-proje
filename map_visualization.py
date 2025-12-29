@@ -336,8 +336,8 @@ class PathfindingVisualizer:
         known_templates = [t for t in self.OBSTACLE_TEMPLATES if t["type"] in self.KNOWN_SCORES]
         unknown_templates = [t for t in self.OBSTACLE_TEMPLATES if t["type"] not in self.KNOWN_SCORES]
         
-        # 50% Chance for Unknown (Mystery) Object
-        if random.random() < 0.5 and unknown_templates:
+        # 30% Chance for Unknown (Mystery) Object -> 70% Known
+        if random.random() < 0.3 and unknown_templates:
             base_prop = random.choice(unknown_templates)
         else:
             base_prop = random.choice(known_templates)
@@ -437,11 +437,26 @@ class PathfindingVisualizer:
             # Check current distance
             ox, oy = item["pos"]
             cx, cy = self.car_pos
-            dist = abs(ox - cx) + abs(oy - cy)
             
-            if dist < 2:
+            # --- Condition 1: VISIBILITY (Line of Sight) ---
+            # Don't upgrade if we can't see it (e.g. behind a wall now)
+            if not self.has_line_of_sight((cx, cy), (ox, oy)):
+                continue
+
+            # --- Condition 2: PROXIMITY TO PATH (Shortest Distance) ---
+            # Check distance to ANY point on the projected path, not just current pos
+            min_dist_to_path = abs(ox - cx) + abs(oy - cy) # Start with dist to car
+            
+            if self.path:
+                for px, py in self.path:
+                    d = abs(ox - px) + abs(oy - py)
+                    if d < min_dist_to_path:
+                        min_dist_to_path = d
+            
+            # Threshold: If obstacle is within 2 blocks of our route
+            if min_dist_to_path < 2:
                 # UPGRADE NEEDED
-                print(f"[PRIORITY UPGRADE] Object {item['props']['id']} at ({ox},{oy}) came into Close Range (Dist {dist})!")
+                print(f"[PRIORITY UPGRADE] Object {item['props']['id']} at ({ox},{oy}) intersects PATH (Dist {min_dist_to_path}) & VISIBLE!")
                 upgraded_indices.append(i)
         
         # Process upgrades (iterate backwards to avoid index shifting)
